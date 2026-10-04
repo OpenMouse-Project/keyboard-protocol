@@ -86,14 +86,15 @@ export const WOOTING_STATUS_ERROR = 0x66;
 
 /**
  * D0DA command IDs (wootswitch table, cross-checked with the RGB SDK and the
- * `d0da` project). Only read-only queries are listed here — deliberately NOT
- * the neighbouring destructive ones (`reset_to_bootloader = 0x02`,
- * `keys_off = 0x15`, `do_soft_reset = 0x19`, profile-save / RGB-write /
- * activate / reload commands, …).
+ * `d0da` project). Write commands below are RAM-only unless marked FLASH:
+ * profile-switch (0x21/0x17/0x26) and RGB-direct (0x1D–0x20) never touch
+ * flash; every `save*` (0x08/0x2A/0x2F/0x35) plus `resetSettings` (0x2B)
+ * overwrites onboard flash and needs an explicit user confirm. Deliberately
+ * absent (NEVER encode): `reset_to_bootloader` 0x02 (leaves HID),
+ * `keys_off` 0x15 (kills output until 0x16/reset), `do_soft_reset` 0x19
+ * (drops RAM state, can re-enumerate).
  */
 export const WOOTING_COMMAND = {
-  /** ping — liveness probe, no payload. */
-  ping: 0x00,
   /** get_version — firmware version. */
   getVersion: 0x01,
   /** get_serial — device serial number. */
@@ -123,8 +124,41 @@ export const WOOTING_COMMAND = {
   getDeviceConfig: 0x13,
   /** get_analog_values — one-shot analog snapshot (vs the streaming interface). */
   getAnalogValues: 0x14,
+  /** keys_on — restores key/LED output (pair of the NEVER-encoded keys_off 0x15). RAM-only. */
+  keysOn: 0x16,
+  /** activate_profile — switches the active profile in RAM (slot byte). RAM-only. */
+  activateProfile: 0x17,
   /** get_dks_profile — dynamic-keystroke profile for a slot. */
   getDksProfile: 0x18,
+  /** refresh_rgb_colors — pushes staged RGB to the board. RAM-only. */
+  refreshRgbColors: 0x1d,
+  /** woot_dev_single_color — sets one key's RGB (SDK WOOTING_SINGLE_COLOR_COMMAND). RAM-only. */
+  wootDevSingleColor: 0x1e,
+  /** woot_dev_reset_color — resets one key's RGB (SDK WOOTING_SINGLE_RESET_COMMAND). RAM-only. */
+  wootDevResetColor: 0x1f,
+  /** woot_dev_reset_all — resets all RGB (SDK WOOTING_RESET_ALL_COMMAND). RAM-only. */
+  wootDevResetAll: 0x20,
+  /** woot_dev_init — session init, sent on SDK connect and before profile switching. RAM-only. */
+  wootDevInit: 0x21,
+  /** reload_profile — reloads LED/key config from flash into the active state (slot byte). RAM-only. */
+  reloadProfile: 0x26,
+  /** save_rgb_profile — persists the RGB profile to flash (slot byte). FLASH. */
+  saveRgbProfile: 0x08,
+  /** reload_profile_0 — reloads profile slot 0 from flash (no slot byte). RAM-only. */
+  reloadProfile0: 0x07,
+  /** save_keyboard_profile — persists the keyboard profile to flash (slot byte). FLASH. */
+  saveKeyboardProfile: 0x2a,
+  /** reset_settings — factory-resets settings. FLASH. */
+  resetSettings: 0x2b,
+  /** set_raw_scanning — toggles raw scanning mode (0/1). RAM-only. */
+  setRawScanning: 0x2c,
+  /** start/stop_xinput_detection — toggles gamepad detection. RAM-only. */
+  startXinputDetection: 0x2d,
+  stopXinputDetection: 0x2e,
+  /** save_dks_profile — persists the DKS profile to flash (slot byte). FLASH. */
+  saveDksProfile: 0x2f,
+  /** save_akc_profile — persists the AKC profile to flash (slot byte). FLASH. */
+  saveAkcProfile: 0x35,
   /** get_keyboard_profile — the active profile: actuation (field 1, mm × 20480), rapid trigger, etc. */
   getKeyboardProfile: 0x27,
   /** get_gamepad_mapping / get_gamepad_profile — gamepad layer (slot). */
@@ -245,19 +279,77 @@ export interface WootingActuation {
   continuousRapidTrigger: boolean;
 }
 
-/** Raw global settings decoded from a get_settings (0x33) reply. */
-export interface WootingGlobalSettings {
-  /** Raw actuation value (nested field 1). Multiply by the mm factor to display. */
-  actuationRaw: number | null;
-  /** Raw rapid-trigger sensitivity value (nested field 2). */
-  rapidTriggerSensitivityRaw: number | null;
+// ---------------------------------------------------------------------------
+// Typed read decoders for the remaining 60HE+ profile / RGB / diagnostic blobs.
+//
+// Every decoder below follows the wootswitch ARM reply layout as delivered by
+// WebHID (report id stripped): `[D1 DA cmdEcho status payload...]` where
+// status is `0x88` (OK) or `0x66` (unsupported / error). Length-prefixed
+// profile blobs carry a u16LE length at payload offset 0 and an outer protobuf;
+// 0x27's outer field 1 holds a nested varint message (actuation/RT), every
+// other profile blob holds opaque binary rows preserved verbatim (see each
+// decoder's live capture). All decoders return null on error status, command
+// mismatch, or a truncated header, and never throw on board bytes. No write
+// encoders live here: Save*/Activate/Reload/RGB-write and the destructive
+// commands (`reset_to_bootloader` 0x02, `keys_off` 0x15, `do_soft_reset`
+// 0x19) are deliberately absent.
+//
+// Actuation conversions use the contract line `raw = 16384 + mm * 4096`
+// ({@link wootingActuationMm}).
+
+/** One nested varint field of a profile blob: its protobuf field number and value. */
+export interface WootingProfileField {
+  field: number;
+  value: number;
+}
+
+/** True when `reply` is a usable answer to `commandId`: long enough, echoing the command, status OK. */
+function wootingCheckedReply(reply: Uint8Array, commandId: number, minLength: number): boolean {
+  return reply.length >= minLength && reply[2] === commandId && wootingReplyOk(reply);
 }
 
 /**
- * Decode the nested-message fields of a profile reply
+ * Body of a length-prefixed profile-blob reply (u16LE length at payload offset
+ * 0, body follows), or null when the reply is unusable. The returned view
+ * shares the reply buffer — no copy.
+ */
+function wootingBlobBody(reply: Uint8Array, commandId: number): Uint8Array | null {
+  if (!wootingCheckedReply(reply, commandId, 6)) return null;
+  const length = reply[4]! | (reply[5]! << 8);
+  return reply.subarray(6, 6 + length);
+}
+
+/** Nested varint field `n` of a profile blob, or null when it is absent. */
+function wootingFieldAt(fields: readonly WootingProfileField[], n: number): number | null {
+  return fields.find((entry) => entry.field === n)?.value ?? null;
+}
+
+/** Nested varint field `n` read as a flag (nonzero = true), or null when absent. */
+function wootingFlagAt(fields: readonly WootingProfileField[], n: number): boolean | null {
+  const value = wootingFieldAt(fields, n);
+  return value === null ? null : value !== 0;
+}
+
+/** Little-endian u16 at `at`, or null when the buffer ends first. */
+function wootingU16LE(bytes: Uint8Array, at: number): number | null {
+  return bytes.length >= at + 2 ? (bytes[at]! | (bytes[at + 1]! << 8)) : null;
+}
+
+/**
+ * Raw payload of a fixed (non-length-prefixed) reply starting at index 4, or
+ * null when the reply is unusable. The returned view shares the reply buffer.
+ */
+function wootingRawPayload(reply: Uint8Array, commandId: number, minLength: number): Uint8Array | null {
+  if (!wootingCheckedReply(reply, commandId, minLength)) return null;
+  return reply.subarray(4);
+}
+
+/**
+ * Decode the nested-message fields of a 0x27 profile reply
  * (`magic magic cmd status <len:u16> 0a <len> <nested>`). Returns the nested
- * message's fields as {field, value}. Used to read the keyboard profile (0x27),
- * whose field 1 is the actuation (stored as mm × 20480).
+ * message's varint fields as {field, value}. Only 0x27 carries this shape on
+ * ARM — every other profile blob holds opaque binary rows, so this helper
+ * MUST NOT be used for 0x0D/0x18/0x28/0x29/0x30/0x31/0x33/0x34/0x36.
  */
 export function decodeWootingProfileFields(reply: Uint8Array): Array<{ field: number; value: number }> {
   if (reply.length < 6) return [];
@@ -281,15 +373,557 @@ export function wootingActuationMm(raw: number): number {
   return (raw - WOOTING_ACTUATION_ZERO) / WOOTING_ACTUATION_UNITS_PER_MM;
 }
 
-export function decodeWootingGlobalSettings(reply: Uint8Array): WootingGlobalSettings | null {
-  if (reply.length < 6 || reply[2] !== WOOTING_COMMAND.getSettings) return null;
+/** Live 60HE+ `get_keyboard_profile` (0x27) nested fields (22-byte body). */
+export interface WootingKeyboardProfile {
+  /** Actuation raw (nested field 1) on the contract line. Confirmed: 17203 = 0.20mm. */
+  actuationRaw: number | null;
+  actuationMm: number | null;
+  /** Rapid-trigger enable flag (nested field 2). Live: 1. */
+  rapidTriggerEnabled: boolean | null;
+  /** Upstroke sensitivity raw (nested field 3). Live: 1. */
+  pressSensitivityRaw: number | null;
+  /** Downstroke sensitivity raw (nested field 4). Live: 16794. */
+  releaseSensitivityRaw: number | null;
+  /** Rapid-trigger release threshold raw (nested field 5). Live: 0. */
+  releaseThresholdRaw: number | null;
+  /** Curve preset selector (nested field 6). Live: 2. */
+  curvePreset: number | null;
+  /** Continuous rapid trigger (nested field 7). Live: 0. */
+  continuousRapidTrigger: boolean | null;
+  /** Every nested varint field, so future firmware fields survive. */
+  fields: WootingProfileField[];
+}
+
+/**
+ * Decode the live `get_keyboard_profile` (0x27) reply. Field numbers are the
+ * live 60HE+ capture (`0a1408b3860110011801209a83012800300238004800`):
+ * f1 = actuation raw, f2 = RT enable, f3/f4 = up/down sensitivity,
+ * f5 = release threshold, f6 = curve preset, f7 = continuous RT, f9 = 0.
+ * Returns null on error status, command mismatch, or a truncated header.
+ */
+export function decodeWootingKeyboardProfile(reply: Uint8Array): WootingKeyboardProfile | null {
+  if (!wootingCheckedReply(reply, WOOTING_COMMAND.getKeyboardProfile, 6)) return null;
+  const fields = decodeWootingProfileFields(reply);
+  const actuationRaw = wootingFieldAt(fields, 1);
+  return {
+    actuationRaw,
+    actuationMm: actuationRaw === null ? null : wootingActuationMm(actuationRaw),
+    rapidTriggerEnabled: wootingFlagAt(fields, 2),
+    pressSensitivityRaw: wootingFieldAt(fields, 3),
+    releaseSensitivityRaw: wootingFieldAt(fields, 4),
+    releaseThresholdRaw: wootingFieldAt(fields, 5),
+    curvePreset: wootingFieldAt(fields, 6),
+    continuousRapidTrigger: wootingFlagAt(fields, 7),
+    fields,
+  };
+}
+
+/**
+ * Decoded `get_analog_profile_main_part` (0x0D) reply: every ARM board answers
+ * `0x66` (unsupported — confirmed live on the 60HE+), so this decoder exists
+ * for Standard-firmware boards only and always yields null on ARM hardware.
+ */
+export interface WootingAnalogProfileMainPart {
+  actuationRaw: number | null;
+  actuationMm: number | null;
+  rapidTriggerEnabled: boolean | null;
+  pressSensitivityRaw: number | null;
+  releaseSensitivityRaw: number | null;
+  continuousRapidTrigger: boolean | null;
+  fields: WootingProfileField[];
+}
+
+export function decodeWootingAnalogProfileMainPart(reply: Uint8Array): WootingAnalogProfileMainPart | null {
+  if (!wootingCheckedReply(reply, WOOTING_COMMAND.getAnalogProfileMainPart, 6)) return null;
+  const fields = decodeWootingProfileFields(reply);
+  const actuationRaw = wootingFieldAt(fields, 1);
+  return {
+    actuationRaw,
+    actuationMm: actuationRaw === null ? null : wootingActuationMm(actuationRaw),
+    rapidTriggerEnabled: wootingFlagAt(fields, 2),
+    pressSensitivityRaw: wootingFieldAt(fields, 3),
+    releaseSensitivityRaw: wootingFieldAt(fields, 4),
+    continuousRapidTrigger: wootingFlagAt(fields, 5),
+    fields,
+  };
+}
+
+/**
+ * Decoded `get_rapid_trigger_profile` (0x36) reply: every ARM board answers an
+ * empty OK body (confirmed live: `d1 da 36 88` + zeros) — rapid-trigger state
+ * lives in the 0x27 keyboard profile on ARM. Kept for Standard firmware.
+ */
+export interface WootingRapidTriggerProfile {
+  enabled: boolean | null;
+  pressSensitivityRaw: number | null;
+  releaseSensitivityRaw: number | null;
+  continuous: boolean | null;
+  fields: WootingProfileField[];
+}
+
+export function decodeWootingRapidTriggerProfile(reply: Uint8Array): WootingRapidTriggerProfile | null {
+  if (!wootingCheckedReply(reply, WOOTING_COMMAND.getRapidTriggerProfile, 6)) return null;
+  const fields = decodeWootingProfileFields(reply);
+  return {
+    enabled: wootingFlagAt(fields, 1),
+    pressSensitivityRaw: wootingFieldAt(fields, 2),
+    releaseSensitivityRaw: wootingFieldAt(fields, 3),
+    continuous: wootingFlagAt(fields, 4),
+    fields,
+  };
+}
+
+/**
+ * Decoded `get_actuation_profile` (0x31) reply: every ARM board answers an
+ * empty OK body (confirmed live: `d1 da 31 88` + zeros), so per-key readings
+ * come from the 0x27 profile instead — this decoder exists for
+ * Standard-firmware boards and preserves whatever nested fields they send.
+ */
+export interface WootingActuationOverride {
+  key: number;
+  actuationRaw: number;
+  actuationMm: number;
+}
+
+export interface WootingActuationProfile {
+  overrides: WootingActuationOverride[];
+  raw: Uint8Array;
+}
+
+export function decodeWootingActuationProfile(reply: Uint8Array): WootingActuationProfile | null {
+  const body = wootingBlobBody(reply, WOOTING_COMMAND.getActuationProfile);
+  if (!body) return null;
+  return {
+    overrides: decodeWootingProfileFields(reply).map(({ field, value }) => ({
+      key: field - 1,
+      actuationRaw: value,
+      actuationMm: wootingActuationMm(value),
+    })),
+    raw: body,
+  };
+}
+
+/**
+ * One key-map row group: the 21-byte inner field-1 payload of one outer
+ * field-1 group. Live 60HE+ `get_mapping_profile` (0x30) body (150 bytes):
+ * six `0a 17 0a 15 <21 bytes>` groups — row content is an opaque key bitmap,
+ * not nested varints (`ff…` bytes are not valid field tags), so rows are
+ * preserved verbatim instead of misread as key/usage pairs.
+ */
+export interface WootingMappingProfile {
+  /** One 21-byte row per outer field-1 group, in reply order. */
+  groups: Uint8Array[];
+  /** Full length-prefixed body, for the remap editor to refine. */
+  raw: Uint8Array;
+}
+
+export function decodeWootingMappingProfile(
+  reply: Uint8Array,
+  commandId: number = WOOTING_COMMAND.getMappingProfile,
+): WootingMappingProfile | null {
+  if (
+    commandId !== WOOTING_COMMAND.getMappingProfile
+    && commandId !== WOOTING_COMMAND.getMainMappingProfile
+    && commandId !== WOOTING_COMMAND.getFunctionMappingProfile
+  ) return null;
+  const body = wootingBlobBody(reply, commandId);
+  if (!body) return null;
+  const groups: Uint8Array[] = [];
+  for (const outer of decodeProtobufFields(body)) {
+    const inner = outer.field === 1 && outer.bytes
+      ? decodeProtobufFields(outer.bytes).find((field) => field.field === 1 && field.bytes)?.bytes
+      : undefined;
+    if (inner) groups.push(inner);
+  }
+  return { groups, raw: body };
+}
+
+/** `get_main_mapping_profile` (0x11): the primary-layer map rows. */
+export function decodeWootingMainMappingProfile(reply: Uint8Array): WootingMappingProfile | null {
+  return decodeWootingMappingProfile(reply, WOOTING_COMMAND.getMainMappingProfile);
+}
+
+/** `get_function_mapping_profile` (0x12): the function-layer map rows. */
+export function decodeWootingFunctionMappingProfile(reply: Uint8Array): WootingMappingProfile | null {
+  return decodeWootingMappingProfile(reply, WOOTING_COMMAND.getFunctionMappingProfile);
+}
+
+/**
+ * Decoded `get_dks_profile` (0x18) reply: every ARM board answers an empty OK
+ * body (confirmed live: `d1 da 18 88` + zeros — no DKS binds on this profile),
+ * so the decoder reports `cellCount` from the length prefix (0 = unbound)
+ * and preserves the body. Populated Standard-firmware bodies stay as `raw`
+ * for the DKS editor to refine.
+ */
+export interface WootingDksProfile {
+  /** Length-prefix value: 0 means no DKS binds on this slot. */
+  cellCount: number;
+  raw: Uint8Array;
+}
+
+export function decodeWootingDksProfile(reply: Uint8Array): WootingDksProfile | null {
+  if (!wootingCheckedReply(reply, WOOTING_COMMAND.getDksProfile, 6)) return null;
   const length = reply[4]! | (reply[5]! << 8);
   const body = reply.subarray(6, 6 + length);
-  const nested = decodeProtobufFields(body).find((field) => field.field === 1 && field.bytes);
-  if (!nested?.bytes) return { actuationRaw: null, rapidTriggerSensitivityRaw: null };
-  const sub = decodeProtobufFields(nested.bytes);
-  const at = (n: number) => sub.find((field) => field.field === n)?.int ?? null;
-  return { actuationRaw: at(1), rapidTriggerSensitivityRaw: at(2) };
+  return { cellCount: length, raw: body };
+}
+
+/**
+ * Decoded `get_akc_profile` (0x34) reply. Schema reverse-engineered from the
+ * Wootility web bundle (protobuf-es classes, `wootility.io`):
+ *
+ * - Body = repeated AKC entries (outer field 1) + trailer fields 2/3.
+ * - Entry = `{ keyIndex: 8, layer: 9, oneof akc: dks = 1, modTap = 2,
+ *   toggleKey = 3, rappySnappy = 4, socd = 5 }` (from the `J_` class field
+ *   list and the binary `switch(u1S)` dispatch: dks = 1, modTap = 2,
+ *   toggle = 3, rappy = 4, socd = 5, keyIndex = 8, layer = 9).
+ * - Rappy/SOCD sub-message = `{ secondaryKey: 1 (uint32 matrix index),
+ *   socd: 2 (SOCD mode enum), inputBothWhenBottomedOut: 3 (bool) }` (from
+ *   the `X_` class field list and both binary writers).
+ * - Matrix index = `(row & 7) << 5 | (col & 31)` (from `Ba`/`l2`: col mask
+ *   `0x1f`, row shift 5, row mask 7; `(31, 7)` = empty).
+ * - SOCD mode enum `Rt` (from the bundle): 0/1/2 = unknown labels, 3 =
+ *   SecondaryPress, 4 = LastInputPriority (from the Wootility UI strings:
+ *   Last Input Priority, Absolute Priority, Neutral).
+ *
+ * Live 60HE+ (18 bytes): entry = `2a 06 [08 63 10 04 18 00] 40 61 48 00`,
+ * i.e. socd(5) = `{ secondaryKey: 99 = (3,3) = D, socd: 4 =
+ * LastInputPriority, bottomed: false }`, keyIndex 97 = (3,1) = A, layer 0.
+ * This matches the Wootility UI showing A+D Last Input Priority active.
+ */
+
+/** Matrix position of a key: row 0–5, col 0–30 (`(31, 7)` = empty). */
+export interface WootingKeyIndex {
+  row: number;
+  col: number;
+}
+
+/** Decode a Wootility matrix key index, or null when it is the empty slot. */
+export function decodeWootingKeyIndex(index: number): WootingKeyIndex | null {
+  const col = index & 0x1f;
+  const row = (index >> 5) & 0x7;
+  if (col === 31 && row === 7) return null;
+  return { row, col };
+}
+
+/** SOCD mode selector (Wootility `Rt` enum; labels 0–2 unknown). */
+export type WootingSocdMode = 0 | 1 | 2 | 3 | 4;
+
+/** Human label for a SOCD mode. Modes 0–2 have no UI string; shown as-is. */
+export function wootingSocdModeLabel(mode: number): string {
+  switch (mode) {
+    case 3: return "Secondary Press";
+    case 4: return "Last Input Priority";
+    default: return `Mode ${mode}`;
+  }
+}
+
+/** Oneof discriminator for an AKC entry (Wootility `J_` oneof `akc`). */
+export type WootingAkcKind = "dks" | "modTap" | "toggleKey" | "rappySnappy" | "socd" | "unknown";
+
+/** Named AKC entry: primary key + layer + the bound advanced-key payload. */
+export interface WootingAkcCombo {
+  /** Primary key matrix index (entry field 8). */
+  keyIndex: number;
+  /** Primary key matrix position, null when empty. */
+  key: WootingKeyIndex | null;
+  /** Entry layer (entry field 9). */
+  layer: number;
+  /** Which oneof member the entry carries (fields 1–5). */
+  kind: WootingAkcKind;
+  /** Secondary key matrix index (Rappy/SOCD field 1). */
+  secondaryKeyIndex: number | null;
+  /** Secondary key matrix position, null when absent/empty. */
+  secondaryKey: WootingKeyIndex | null;
+  /** SOCD mode (Rappy/SOCD field 2). */
+  socdMode: number | null;
+  /** Both keys stay active when bottomed out (Rappy/SOCD field 3). */
+  inputBothWhenBottomedOut: boolean | null;
+  /** Verbatim bytes of the oneof sub-message. */
+  payload: Uint8Array | null;
+  /** Verbatim bytes of the whole entry. */
+  raw: Uint8Array;
+}
+
+export interface WootingAkcProfile {
+  combos: WootingAkcCombo[];
+  /** Every outer field's bytes, so trailer fields survive. */
+  fields: Array<{ field: number; raw: Uint8Array }>;
+  raw: Uint8Array;
+}
+
+/** Map an entry oneof field number to its kind (dks = 1 … socd = 5). */
+function wootingAkcKind(field: number): WootingAkcKind | null {
+  switch (field) {
+    case 1: return "dks";
+    case 2: return "modTap";
+    case 3: return "toggleKey";
+    case 4: return "rappySnappy";
+    case 5: return "socd";
+    default: return null;
+  }
+}
+
+export function decodeWootingAkcProfile(reply: Uint8Array): WootingAkcProfile | null {
+  const body = wootingBlobBody(reply, WOOTING_COMMAND.getAkcProfile);
+  if (!body) return null;
+  const combos: WootingAkcCombo[] = [];
+  const fields: Array<{ field: number; raw: Uint8Array }> = [];
+  for (const outer of decodeProtobufFields(body)) {
+    if (!outer.bytes) continue;
+    fields.push({ field: outer.field, raw: outer.bytes });
+    if (outer.field !== 1) continue;
+    const entry = decodeProtobufFields(outer.bytes);
+    const keyField = entry.find((field) => field.field === 8 && field.int !== undefined);
+    const layerField = entry.find((field) => field.field === 9 && field.int !== undefined);
+    const payloadField = entry.find((field) => field.bytes && wootingAkcKind(field.field) !== null);
+    const kind = payloadField ? wootingAkcKind(payloadField.field)! : "unknown";
+    let secondaryKeyIndex: number | null = null;
+    let socdMode: number | null = null;
+    let inputBothWhenBottomedOut: boolean | null = null;
+    if (payloadField?.bytes && (kind === "rappySnappy" || kind === "socd")) {
+      for (const sub of decodeProtobufFields(payloadField.bytes)) {
+        if (sub.field === 1 && sub.int !== undefined) secondaryKeyIndex = sub.int;
+        else if (sub.field === 2 && sub.int !== undefined) socdMode = sub.int;
+        else if (sub.field === 3 && sub.int !== undefined) inputBothWhenBottomedOut = sub.int !== 0;
+      }
+    }
+    combos.push({
+      keyIndex: keyField?.int ?? -1,
+      key: keyField?.int === undefined ? null : decodeWootingKeyIndex(keyField.int),
+      layer: layerField?.int ?? 0,
+      kind,
+      secondaryKeyIndex,
+      secondaryKey: secondaryKeyIndex === null ? null : decodeWootingKeyIndex(secondaryKeyIndex),
+      socdMode,
+      inputBothWhenBottomedOut,
+      payload: payloadField?.bytes ?? null,
+      raw: outer.bytes,
+    });
+  }
+  if (combos.length === 0) return null;
+  return { combos, fields, raw: body };
+}
+
+/**
+ * Decoded `get_gamepad_profile` (0x29) reply: every outer field holds one
+ * inner bind/axis group verbatim (live 60HE+, 40 bytes: four `0a 04…` /
+ * `0a 06…` groups under outer field 1 plus a field-2 mode trailer
+ * `0800100018012032`). The trailer's field 3 is the profile's mode selector
+ * (best-effort); rows stay binary.
+ */
+export interface WootingGamepadProfile {
+  /** Verbatim bytes of one outer field-1 group. */
+  groups: Uint8Array[];
+  /** Mode selector from the field-2 trailer (field 3, best-effort). */
+  mode: number | null;
+  /** Every outer field's bytes, so unknown trailer fields survive. */
+  fields: Array<{ field: number; raw: Uint8Array }>;
+  raw: Uint8Array;
+}
+
+export function decodeWootingGamepadProfile(reply: Uint8Array): WootingGamepadProfile | null {
+  const body = wootingBlobBody(reply, WOOTING_COMMAND.getGamepadProfile);
+  if (!body) return null;
+  const groups: Uint8Array[] = [];
+  const fields: Array<{ field: number; raw: Uint8Array }> = [];
+  let mode: number | null = null;
+  for (const outer of decodeProtobufFields(body)) {
+    if (!outer.bytes) continue;
+    fields.push({ field: outer.field, raw: outer.bytes });
+    if (outer.field === 1) groups.push(outer.bytes);
+    else if (outer.field === 2) {
+      mode = decodeProtobufFields(outer.bytes).find((inner) => inner.field === 3)?.int ?? null;
+    }
+  }
+  if (groups.length === 0) return null;
+  return { groups, mode, fields, raw: body };
+}
+
+/**
+ * Decoded `get_gamepad_mapping` (0x28) reply: every ARM board answers an
+ * empty OK body (confirmed live: `d1 da 28 88` + zeros — no gamepad binds on
+ * this profile). Gamepad binds live in the 0x29 profile instead. Kept for
+ * Standard firmware; populated bodies stay as `raw` for the editor.
+ */
+export interface WootingGamepadMapping {
+  /** Length-prefix value: 0 means no gamepad binds on this slot. */
+  bindingCount: number;
+  raw: Uint8Array;
+}
+
+export function decodeWootingGamepadMapping(reply: Uint8Array): WootingGamepadMapping | null {
+  if (!wootingCheckedReply(reply, WOOTING_COMMAND.getGamepadMapping, 6)) return null;
+  const length = reply[4]! | (reply[5]! << 8);
+  const body = reply.subarray(6, 6 + length);
+  return { bindingCount: length, raw: body };
+}
+
+/**
+ * RGB profile block shared by `get_rgb_profile_core` (0x32), colours
+ * (0x23/0x24), layer (0x39), and bins (0x3B). Live 60HE+ shapes: core is one
+ * field-1 config row (`08ff0110ffff03…`) plus a field-4 lighting row;
+ * colours are repeated field-1 BGR rows; bins is a packed calibration row.
+ * Rows are binary (e.g. `0xff 0x01` is not a valid field tag), so groups stay
+ * verbatim with the trailer bytes split out.
+ */
+export interface WootingRgbBlock {
+  commandId: number;
+  /** Verbatim bytes of every outer field-1 group, in reply order. */
+  groups: Uint8Array[];
+  /** Verbatim bytes of the first non-field-1 group (lighting/trailer), if any. */
+  trailer: Uint8Array | null;
+  raw: Uint8Array;
+}
+
+function decodeWootingRgbBlock(reply: Uint8Array, commandId: number): WootingRgbBlock | null {
+  const body = wootingBlobBody(reply, commandId);
+  if (!body) return null;
+  const groups: Uint8Array[] = [];
+  let trailer: Uint8Array | null = null;
+  for (const outer of decodeProtobufFields(body)) {
+    if (!outer.bytes) continue;
+    if (outer.field === 1) groups.push(outer.bytes);
+    else if (!trailer) trailer = outer.bytes;
+  }
+  if (groups.length === 0) return null;
+  return { commandId, groups, trailer, raw: body };
+}
+
+/** `get_rgb_profile_core` (0x32): the RGB profile core block. */
+export function decodeWootingRgbProfileCore(reply: Uint8Array): WootingRgbBlock | null {
+  return decodeWootingRgbBlock(reply, WOOTING_COMMAND.getRgbProfileCore);
+}
+
+/**
+ * `get_rgb_profile_colors_1/2` (0x23/0x24): the RGB colour pages. The part is
+ * read off the echoed command — a reply echoing anything else is not a colour
+ * page and decodes to null.
+ */
+export interface WootingRgbProfileColors extends WootingRgbBlock {
+  part: 1 | 2;
+}
+
+export function decodeWootingRgbProfileColors(reply: Uint8Array): WootingRgbProfileColors | null {
+  const echoed = reply[2] ?? -1;
+  if (echoed !== WOOTING_COMMAND.getRgbProfileColors1 && echoed !== WOOTING_COMMAND.getRgbProfileColors2) return null;
+  const block = decodeWootingRgbBlock(reply, echoed);
+  if (!block) return null;
+  return { ...block, part: echoed === WOOTING_COMMAND.getRgbProfileColors1 ? 1 : 2 };
+}
+
+/** `get_rgb_layer` (0x39): one RGB layer block. */
+export function decodeWootingRgbLayer(reply: Uint8Array): WootingRgbBlock | null {
+  return decodeWootingRgbBlock(reply, WOOTING_COMMAND.getRgbLayer);
+}
+
+/** `get_rgb_bins` (0x3B): the RGB bin-calibration block. */
+export function decodeWootingRgbBins(reply: Uint8Array): WootingRgbBlock | null {
+  return decodeWootingRgbBlock(reply, WOOTING_COMMAND.getRgbBins);
+}
+
+/**
+ * Full global settings decoded from a get_settings (0x33) reply. Live 60HE+
+ * (8-byte body `0a040805100a1000`): the field-1 group holds verbatim config
+ * bytes `08 05 10 0a` — NOT nested varints (`0x10 0x0a` is not a valid field
+ * tag) — so settings are preserved as raw config rows. Wootility ranges
+ * (actuation 0.1–4.0mm, RT, Tachyon ≤1000Hz on 60HE+) apply at the UI layer,
+ * never as decoded claims here.
+ */
+export interface WootingGlobalSettings {
+  /** Verbatim config bytes of the field-1 group. */
+  config: Uint8Array | null;
+  /** Every outer field's bytes, so unknown settings survive. */
+  fields: Array<{ field: number; raw: Uint8Array }>;
+  /** The full length-prefixed body. */
+  raw: Uint8Array;
+}
+
+export function decodeWootingGlobalSettings(reply: Uint8Array): WootingGlobalSettings | null {
+  const body = wootingBlobBody(reply, WOOTING_COMMAND.getSettings);
+  if (!body) return null;
+  const fields: Array<{ field: number; raw: Uint8Array }> = [];
+  let config: Uint8Array | null = null;
+  for (const outer of decodeProtobufFields(body)) {
+    if (!outer.bytes) continue;
+    fields.push({ field: outer.field, raw: outer.bytes });
+    if (outer.field === 1 && !config) config = outer.bytes;
+  }
+  if (!config) return null;
+  return { config, fields, raw: body };
+}
+
+/**
+ * Named scalar diagnostics. All three share the single-byte payload shape, so
+ * each delegates to {@link decodeWootingCount} — the names exist so the
+ * driver and UI layers can import one decoder per command id.
+ */
+
+/** `get_number_of_keys` (0x10): matrix key count (61 on the 60HE+). */
+export function decodeWootingNumberOfKeys(reply: Uint8Array): number | null {
+  return decodeWootingCount(reply, WOOTING_COMMAND.getNumberOfKeys);
+}
+
+/** `get_analog_profiles_count` (0x0A): analog profile count. */
+export function decodeWootingAnalogProfilesCount(reply: Uint8Array): number | null {
+  return decodeWootingCount(reply, WOOTING_COMMAND.getAnalogProfilesCount);
+}
+
+/** `get_rgb_profile_count` (0x04): RGB profile count. */
+export function decodeWootingRgbProfileCount(reply: Uint8Array): number | null {
+  return decodeWootingCount(reply, WOOTING_COMMAND.getRgbProfileCount);
+}
+
+/**
+ * `is_flash_chip_connected` (0x38): nonzero payload byte means the flash chip
+ * answers. Null on error status or a truncated header — never a guessed false.
+ */
+export function decodeWootingFlashChipConnected(reply: Uint8Array): boolean | null {
+  const payload = wootingRawPayload(reply, WOOTING_COMMAND.isFlashChipConnected, 5);
+  if (!payload) return null;
+  return payload[0] !== 0;
+}
+
+/**
+ * `get_flash_stats` (0x3A): flash usage as two u16LE page counts (used, then
+ * total — best-effort order) with the raw payload preserved for refinement.
+ */
+export interface WootingFlashStats {
+  usedPages: number | null;
+  totalPages: number | null;
+  raw: Uint8Array;
+}
+
+export function decodeWootingFlashStats(reply: Uint8Array): WootingFlashStats | null {
+  const payload = wootingRawPayload(reply, WOOTING_COMMAND.getFlashStats, 8);
+  if (!payload) return null;
+  return { usedPages: wootingU16LE(payload, 0), totalPages: wootingU16LE(payload, 2), raw: payload };
+}
+
+/**
+ * `get_analog_values` (0x14): one-shot analog snapshot. The live 60HE+ answers
+ * the same six-group profile layout as 0x30 (150 bytes of `0a 17 0a 15 …`
+ * rows, all zero at rest), NOT the streaming 3-byte `[usageHigh, usage,
+ * value]` shape — so the raw groups are preserved for the snapshot view.
+ * Returns null on error status or a truncated header.
+ */
+export interface WootingAnalogSnapshot {
+  /** One 21-byte row per outer field-1 group, in reply order. */
+  groups: Uint8Array[];
+  raw: Uint8Array;
+}
+
+export function decodeWootingAnalogSnapshot(reply: Uint8Array): WootingAnalogSnapshot | null {
+  const body = wootingBlobBody(reply, WOOTING_COMMAND.getAnalogValues);
+  if (!body) return null;
+  const groups: Uint8Array[] = [];
+  for (const outer of decodeProtobufFields(body)) {
+    const inner = outer.field === 1 && outer.bytes
+      ? decodeProtobufFields(outer.bytes).find((field) => field.field === 1 && field.bytes)?.bytes
+      : undefined;
+    if (inner) groups.push(inner);
+  }
+  return { groups, raw: body };
 }
 
 export interface WootingCommandOptions {
@@ -346,6 +980,95 @@ export function encodeWootingProfileCommand(
  */
 export function wootingFeatureReport(buffer: Uint8Array) {
   return { reportId: buffer[0] ?? 0, data: buffer.slice(1) };
+}
+/**
+ * Settle delay between profile-switch steps. The wootswitch sequence needs
+ * 100ms after ActivateProfile before ReloadProfile, and 100ms after reload
+ * before the change is visible — confirmed live (switching without the
+ * settle leaves the 0x0b index stale).
+ */
+export const WOOTING_PROFILE_SWITCH_SETTLE_MS = 100;
+
+/**
+ * Encode the three-step RAM-only profile-switch sequence (wootswitch):
+ * WootDevInit (0x21, no args) → ActivateProfile (0x17, slot) → ReloadProfile
+ * (0x26, slot). Returns the three 8-byte buffers in send order; the driver
+ * waits {@link WOOTING_PROFILE_SWITCH_SETTLE_MS} between sends and verifies
+ * with get_current_keyboard_profile_index (0x0b). NEVER persists to flash —
+ * the board reverts on power loss unless a save* follows with user confirm.
+ */
+export function encodeWootingProfileSwitch(slot: number, { multiReport = true }: WootingCommandOptions = {}): [Uint8Array, Uint8Array, Uint8Array] {
+  return [
+    encodeWootingCommand(WOOTING_COMMAND.wootDevInit, 0, 0, 0, 0, { multiReport }),
+    encodeWootingProfileCommand(WOOTING_COMMAND.activateProfile, slot, { multiReport }),
+    encodeWootingProfileCommand(WOOTING_COMMAND.reloadProfile, slot, { multiReport }),
+  ];
+}
+
+/**
+ * Encode a FLASH-persisting save command (save_rgb_profile 0x08,
+ * save_keyboard_profile 0x2A, save_dks_profile 0x2F, save_akc_profile 0x35).
+ * The `confirmed` flag is a call-site gate: without it the encoder throws
+ * instead of building a flash-overwriting buffer, so no UI drag or slider can
+ * persist by accident — only an explicit Save button passing confirmed: true.
+ */
+export function encodeWootingSaveCommand(
+  commandId: number,
+  slot: number,
+  { multiReport = true, confirmed = false }: WootingCommandOptions & { confirmed?: boolean } = {},
+): Uint8Array {
+  if (
+    commandId !== WOOTING_COMMAND.saveRgbProfile
+    && commandId !== WOOTING_COMMAND.saveKeyboardProfile
+    && commandId !== WOOTING_COMMAND.saveDksProfile
+    && commandId !== WOOTING_COMMAND.saveAkcProfile
+  ) throw new Error(`Refusing to encode non-save command 0x${commandId.toString(16)} as a flash write.`);
+  if (!confirmed) throw new Error("Refusing to encode a flash write without confirmed: true.");
+  return encodeWootingProfileCommand(commandId, slot, { multiReport });
+}
+
+/**
+ * Encode a single-key RGB set (woot_dev_single_color 0x1E, SDK
+ * WOOTING_SINGLE_COLOR_COMMAND): key index + R/G/B. RAM-only — visible until
+ * the profile reloads; persists only via save_rgb_profile with confirm.
+ * Live 60HE+: `0x1E` answers 0x88 (accepted); `0x1F`/`0x20` answer 0x88;
+ * `0x1D` answers 0x66 (no staged RGB to push on this firmware).
+ */
+export function encodeWootingSingleColor(
+  keyIndex: number,
+  red: number,
+  green: number,
+  blue: number,
+  { multiReport = true }: WootingCommandOptions = {},
+): Uint8Array {
+  return encodeWootingCommand(WOOTING_COMMAND.wootDevSingleColor, blue, green, red, keyIndex, { multiReport });
+}
+
+/**
+ * Encode the full-board RGB buffer (SDK wooting_usb_send_buffer_v3 path):
+ * report index 5, magic D1 DA, report id 11, then the 6×21×u16 BGR matrix
+ * (252 bytes). The 60HE+ meta uses small packets (SDK uses_small_packets)
+ * but the v3 single-write shape is what the ARM firmware accepts on the
+ * config interface — confirmed by the SDK's v3 branch, NOT yet by a live
+ * Wootility capture, so the driver sends it only from an explicit RGB Apply.
+ * Live note: refresh_rgb_colors (0x1D) answers 0x66 on this firmware, so a
+ * buffer push that the board will not display must surface "not applied"
+ * rather than success (see driver setRgbBuffer).
+ */
+export const WOOTING_RGB_ROWS = 6;
+export const WOOTING_RGB_COLS = 21;
+export const WOOTING_RGB_REPORT_ID = 11;
+export function encodeWootingRgbBuffer(colors: Uint8Array | readonly number[]): Uint8Array {
+  if (colors.length !== WOOTING_RGB_ROWS * WOOTING_RGB_COLS * 2) {
+    throw new Error(`RGB buffer must be ${WOOTING_RGB_ROWS * WOOTING_RGB_COLS * 2} bytes, got ${colors.length}.`);
+  }
+  const buffer = new Uint8Array(4 + colors.length);
+  buffer[0] = 5;
+  buffer[1] = WOOTING_MAGIC_MULTI;
+  buffer[2] = WOOTING_MAGIC_WORD_1;
+  buffer[3] = WOOTING_RGB_REPORT_ID;
+  buffer.set(colors, 4);
+  return buffer;
 }
 
 /**

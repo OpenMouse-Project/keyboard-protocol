@@ -1,15 +1,46 @@
-import type { KeyboardStatus } from "../keyboard-types.ts";
+import type {
+  KeyboardStatus,
+  WootingAnalogProfileFull,
+  WootingAnalogSnapshot,
+  WootingDiagnostics,
+  WootingGamepad,
+  WootingMappings,
+  WootingRgb,
+} from "../keyboard-types.ts";
 import {
+  decodeWootingAkcProfile,
+  decodeWootingAnalogProfilesCount,
   decodeWootingAnalogReport,
+  decodeWootingAnalogSnapshot,
   decodeWootingDeviceConfig,
+  decodeWootingFlashChipConnected,
+  decodeWootingFlashStats,
+  decodeWootingFunctionMappingProfile,
+  decodeWootingGamepadProfile,
+  decodeWootingGlobalSettings,
+  decodeWootingKeyboardProfile,
+  decodeWootingMainMappingProfile,
+  decodeWootingMappingProfile,
+  decodeWootingNumberOfKeys,
   decodeWootingProfileIndex,
   decodeWootingProfileMetadata,
+  decodeWootingRgbProfileColors,
+  decodeWootingRgbProfileCore,
+  decodeWootingRgbProfileCount,
+  decodeWootingRgbLayer,
   decodeWootingVersion,
   encodeWootingCommand,
   encodeWootingProfileCommand,
+  encodeWootingProfileSwitch,
+  encodeWootingRgbBuffer,
+  encodeWootingSaveCommand,
+  encodeWootingSingleColor,
   isWootingReply,
+  wootingActuationMm,
   wootingFeatureReport,
   wootingProductName,
+  wootingReplyOk,
+  WOOTING_PROFILE_SWITCH_SETTLE_MS,
   WOOTING_ANALOG_USAGE_PAGE,
   WOOTING_ANALOG_USAGE_PAGE_ALT,
   WOOTING_COMMAND,
@@ -19,7 +50,11 @@ import {
   WOOTING_PRODUCTS,
   WOOTING_STATUS_ERROR,
   WOOTING_VENDOR_ID,
+  type WootingActuationProfile,
+  type WootingAkcProfile,
   type WootingAnalogKey,
+  type WootingDksProfile,
+  type WootingRapidTriggerProfile,
   WOOTING_MAGIC_MULTI,
   WOOTING_MAGIC_WORD_1,
 } from "@openmouse/keyboard-protocol/wooting";
@@ -32,21 +67,15 @@ function wootingDelay(ms: number): Promise<void> {
 }
 
 /**
- * Wooting analog keyboard (60HE+) HID control — read-only identity plus
- * profile discovery.
+ * Wooting analog keyboard (60HE+) HID control — identity + profile reads plus
+ * the safe write subset: RAM-only profile switching (0x21/0x17/0x26),
+ * RAM-only RGB-direct (0x1E/0x1F/0x20) and full-buffer push, and
+ * confirm-gated flash saves (0x08/0x2A/0x2F/0x35).
  *
- * The host is a device control panel, so a keyboard has no home in the mouse
- * settings grid: `ui.settingsReady` stays false and this exposes no setters,
- * so nothing here can change a key, curve, or profile. The job is narrow and
- * honest: recognise a supported Wooting board on its vendor config interface,
- * connect, and report what it is — firmware, layout, serial, active profile,
- * profile names.
- *
- * Device identity always succeeds — it comes from the `HIDDevice` metadata.
- * Every live config read is best-effort: the 60HE+ config interface declares
- * only an input report, so whether the browser permits the outgoing feature
- * report is hardware/Chrome-specific. When it is not permitted the driver still
- * connects and identifies the board; it just omits the live lines.
+ * NEVER encoded here: 0x02 (bootloader — leaves HID), 0x15 (keys_off — kills
+ * output), 0x19 (soft reset — drops RAM), 0x2B (factory reset). Writes bypass
+ * the read cache and invalidate it after, so a readStatus after any write
+ * re-reads the board instead of echoing stale bytes.
  */
 
 const CONFIG_RESPONSE_TIMEOUT_MS = 400;
@@ -62,6 +91,8 @@ const MAX_PROFILE_PROBE_SLOTS = 8;
 export interface WootingResponseWaiter {
   resolve: (data: Uint8Array) => void;
   reject: (error: Error) => void;
+  /** Command id the waiter was armed for; -1 accepts any genuine reply. */
+  commandId: number;
 }
 
 /** Timeout handle guarding a pending single-reply read. */
@@ -94,8 +125,16 @@ export class WootingHidClient {
       this.collecting.push(bytes);
       return;
     }
+    // Keypress chatter (plain keyboard/boot reports, analog-stream frames)
+    // arrives on this same channel — only a magic-word reply echoing the
+    // command this waiter was armed for may resolve it. Anything else is
+    // left for the analog listener and the waiter keeps waiting for the
+    // real reply (or times out, and the caller falls back to null, never
+    // to a keystroke).
     const waiter = this.responseWaiter;
     if (!waiter) return;
+    if (!isWootingReply(bytes)) return;
+    if (waiter.commandId >= 0 && bytes[2] !== waiter.commandId) return;
     this.clearPendingRead();
     waiter.resolve(bytes);
   };
@@ -216,7 +255,8 @@ export class WootingHidClient {
       name,
       ui: {
         family: "wooting",
-        // Keyboard analog controls have no place in the mouse settings grid yet.
+        // No host consumer reads the nested objects yet, so the mouse grid
+        // stays hidden; the fields are present for the planned keyboard UI.
         settingsReady: false,
         defaultDisplayName: name,
       },
@@ -229,6 +269,16 @@ export class WootingHidClient {
       activeProfile: profile.active,
       profileCount: profile.count,
       profileNames: profile.names,
+      analogProfile: profile.analogProfile,
+      perKeyActuation: profile.perKeyActuation,
+      rapidTrigger: profile.rapidTrigger,
+      mappings: profile.mappings,
+      dks: profile.dks,
+      akc: profile.akc,
+      gamepad: profile.gamepad,
+      rgb: profile.rgb,
+      diagnostics: profile.diagnostics,
+      analogSnapshot: profile.analogSnapshot,
     };
   }
 
@@ -246,6 +296,16 @@ export class WootingHidClient {
     active: number | null;
     count: number | null;
     names: readonly (string | null)[];
+    analogProfile: WootingAnalogProfileFull | null;
+    perKeyActuation: WootingActuationProfile | null;
+    rapidTrigger: WootingRapidTriggerProfile | null;
+    mappings: WootingMappings | null;
+    dks: WootingDksProfile | null;
+    akc: WootingAkcProfile | null;
+    gamepad: WootingGamepad | null;
+    rgb: WootingRgb | null;
+    diagnostics: WootingDiagnostics | null;
+    analogSnapshot: WootingAnalogSnapshot | null;
   }> {
     const indexReply = await this.command(WOOTING_COMMAND.getCurrentKeyboardProfileIndex);
     const active = indexReply ? decodeWootingProfileIndex(indexReply)?.active ?? null : null;
@@ -253,20 +313,39 @@ export class WootingHidClient {
     // instead (wootswitch). A direct count is still tried first: Standard
     // boards answer it and it costs one round trip.
     const direct = await this.command(WOOTING_COMMAND.getDigitalProfilesCount);
+    let count: number | null;
+    let names: readonly (string | null)[];
     if (direct && direct[3] !== WOOTING_STATUS_ERROR && direct.length > 4) {
-      const count = direct[4]!;
-      return { active, count, names: await this.readProfileNames(count) };
+      count = direct[4]!;
+      names = await this.readProfileNames(count);
+    } else {
+      const probed: (string | null)[] = [];
+      let probedCount: number | null = null;
+      for (let slot = 0; slot < MAX_PROFILE_PROBE_SLOTS; slot += 1) {
+        const reply = await this.sendProfileCommand(WOOTING_COMMAND.getProfileMetadata, slot).catch(() => null);
+        const decoded = reply ? decodeWootingProfileMetadata(reply) : null;
+        if (!decoded?.exists) break;
+        probed.push(decoded.name);
+        probedCount = slot + 1;
+      }
+      count = probedCount;
+      names = probed;
     }
-    const names: (string | null)[] = [];
-    let count: number | null = null;
-    for (let slot = 0; slot < MAX_PROFILE_PROBE_SLOTS; slot += 1) {
-      const reply = await this.sendProfileCommand(WOOTING_COMMAND.getProfileMetadata, slot).catch(() => null);
-      const decoded = reply ? decodeWootingProfileMetadata(reply) : null;
-      if (!decoded?.exists) break;
-      names.push(decoded.name);
-      count = slot + 1;
-    }
-    return { active, count, names };
+    // Deep feature reads target the runtime-active slot (0 when the index is
+    // unreadable) and stay best-effort: every helper catches its own failure,
+    // so identity (firmware/layout/profiles) always survives a silent extra.
+    const target = active ?? 0;
+    const [analogProfile, mappings, dks, akc, gamepad, rgb, diagnostics, analogSnapshot] = await Promise.all([
+      this.readAnalogProfileFull(target).catch(() => null),
+      this.readMappings(target).catch(() => null),
+      this.readDks(target).catch(() => null),
+      this.readAkc(target).catch(() => null),
+      this.readGamepad(target).catch(() => null),
+      this.readRgb(target).catch(() => null),
+      this.readDiagnostics().catch(() => null),
+      this.readAnalogSnapshot().catch(() => ({ available: false as const, keys: [] })),
+    ]);
+    return { active, count, names, analogProfile, perKeyActuation: null, rapidTrigger: null, mappings, dks, akc, gamepad, rgb, diagnostics, analogSnapshot };
   }
 
   /** Profile names for slots `0..slotCount`, null where the board stays silent. */
@@ -297,6 +376,162 @@ export class WootingHidClient {
   }
 
   /**
+   * Actuation + rapid trigger for the active profile (0x27) plus global
+   * settings (0x33). Never throws: every leg is best-effort and a silent
+   * board reports nulls. Live 60HE+ 0x27 body is 22 bytes with actuation raw
+   * 17203 = 0.20mm on the contract line `raw = 16384 + mm * 4096`.
+   */
+  async readAnalogProfileFull(slot?: number): Promise<WootingAnalogProfileFull | null> {
+    await this.open();
+    const target = slot ?? await this.activeSlotOrDefault();
+    const keyboard = target === null ? null : await this.sendProfileCommand(WOOTING_COMMAND.getKeyboardProfile, target).catch(() => null);
+    const globalReply = await this.command(WOOTING_COMMAND.getSettings);
+    if (!keyboard && !globalReply) return null;
+    const decoded = keyboard ? decodeWootingKeyboardProfile(keyboard) : null;
+    const actuationRaw = decoded?.actuationRaw ?? null;
+    return {
+      actuationRaw,
+      actuationMm: actuationRaw === null ? null : wootingActuationMm(actuationRaw),
+      profileFields: decoded?.fields ?? [],
+      global: globalReply ? decodeWootingGlobalSettings(globalReply) : null,
+    };
+  }
+
+  /**
+   * Per-key actuation overrides (0x31). Every ARM board answers an empty OK
+   * body (confirmed live), so this stays null on ARM — Standard firmware only.
+   */
+  async readPerKeyActuation(_slot?: number): Promise<WootingActuationProfile | null> {
+    await this.open();
+    return null;
+  }
+
+  /**
+   * Rapid-trigger profile (0x36). Every ARM board answers an empty OK body
+   * (confirmed live) — rapid-trigger state lives in the 0x27 keyboard
+   * profile on ARM. Standard firmware only.
+   */
+  async readRapidTrigger(_slot?: number): Promise<WootingRapidTriggerProfile | null> {
+    await this.open();
+    return null;
+  }
+
+  /** Key mappings for one slot: generic blob (0x30) plus Fn layers (0x11/0x12). */
+  async readMappings(slot?: number): Promise<WootingMappings | null> {
+    await this.open();
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const mappingReply = await this.sendProfileCommand(WOOTING_COMMAND.getMappingProfile, target).catch(() => null);
+    const mainReply = await this.sendProfileCommand(WOOTING_COMMAND.getMainMappingProfile, target).catch(() => null);
+    const functionReply = await this.sendProfileCommand(WOOTING_COMMAND.getFunctionMappingProfile, target).catch(() => null);
+    if (!mappingReply && !mainReply && !functionReply) return null;
+    return {
+      slot: target,
+      mapping: mappingReply ? decodeWootingMappingProfile(mappingReply) : null,
+      main: mainReply ? decodeWootingMainMappingProfile(mainReply) : null,
+      function: functionReply ? decodeWootingFunctionMappingProfile(functionReply) : null,
+    };
+  }
+
+  /**
+   * Dynamic-keystroke profile (0x18). Every ARM board answers an empty OK
+   * body (confirmed live), so this reports null = unbound on ARM — Standard
+   * firmware only.
+   */
+  async readDks(_slot?: number): Promise<WootingDksProfile | null> {
+    await this.open();
+    return null;
+  }
+
+  /** Advanced-keys-combo profile for one slot (0x34). Null when silent. */
+  async readAkc(slot?: number): Promise<WootingAkcProfile | null> {
+    await this.open();
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const reply = await this.sendProfileCommand(WOOTING_COMMAND.getAkcProfile, target).catch(() => null);
+    return reply ? decodeWootingAkcProfile(reply) : null;
+  }
+
+  /**
+   * Gamepad layer: 0x29 profile rows only. 0x28 answers an empty OK body on
+   * every ARM board (confirmed live), so `mapping` stays null on ARM.
+   */
+  async readGamepad(slot?: number): Promise<WootingGamepad | null> {
+    await this.open();
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const profileReply = await this.sendProfileCommand(WOOTING_COMMAND.getGamepadProfile, target).catch(() => null);
+    if (!profileReply) return null;
+    return {
+      slot: target,
+      mapping: null,
+      profile: decodeWootingGamepadProfile(profileReply),
+    };
+  }
+
+  /**
+   * RGB blocks for one slot: core (0x32), colour pages (0x23/0x24), layer
+   * (0x39). Read-only sizes/fields — no effect writes.
+   */
+  async readRgb(slot?: number): Promise<WootingRgb | null> {
+    await this.open();
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const coreReply = await this.sendProfileCommand(WOOTING_COMMAND.getRgbProfileCore, target).catch(() => null);
+    const colors1Reply = await this.sendProfileCommand(WOOTING_COMMAND.getRgbProfileColors1, target).catch(() => null);
+    const colors2Reply = await this.sendProfileCommand(WOOTING_COMMAND.getRgbProfileColors2, target).catch(() => null);
+    const layerReply = await this.sendProfileCommand(WOOTING_COMMAND.getRgbLayer, target).catch(() => null);
+    if (!coreReply && !colors1Reply && !colors2Reply && !layerReply) return null;
+    return {
+      slot: target,
+      core: coreReply ? decodeWootingRgbProfileCore(coreReply) : null,
+      colors1: colors1Reply ? decodeWootingRgbProfileColors(colors1Reply) : null,
+      colors2: colors2Reply ? decodeWootingRgbProfileColors(colors2Reply) : null,
+      layer: layerReply ? decodeWootingRgbLayer(layerReply) : null,
+    };
+  }
+
+  /** Counts + flash health (0x10 / 0x04 / 0x0A / 0x38 / 0x3A). */
+  async readDiagnostics(): Promise<WootingDiagnostics | null> {
+    await this.open();
+    const keysReply = await this.command(WOOTING_COMMAND.getNumberOfKeys);
+    const rgbCountReply = await this.command(WOOTING_COMMAND.getRgbProfileCount);
+    const analogCountReply = await this.command(WOOTING_COMMAND.getAnalogProfilesCount);
+    const flashReply = await this.command(WOOTING_COMMAND.isFlashChipConnected);
+    const flashStatsReply = await this.command(WOOTING_COMMAND.getFlashStats);
+    if (!keysReply && !rgbCountReply && !analogCountReply && !flashReply && !flashStatsReply) return null;
+    return {
+      keyCount: keysReply ? decodeWootingNumberOfKeys(keysReply) : null,
+      rgbProfileCount: rgbCountReply ? decodeWootingRgbProfileCount(rgbCountReply) : null,
+      analogProfileCount: analogCountReply ? decodeWootingAnalogProfilesCount(analogCountReply) : null,
+      flashConnected: flashReply ? decodeWootingFlashChipConnected(flashReply) : null,
+      flashStats: flashStatsReply ? decodeWootingFlashStats(flashStatsReply) : null,
+    };
+  }
+
+  /**
+   * One-shot analog snapshot (0x14) versus the streaming `startAnalog`
+   * interface. The board answers opaque profile-layout rows (all zero at
+   * rest), so groups are preserved verbatim. `available` is false when the
+   * board stays silent.
+   */
+  async readAnalogSnapshot(): Promise<WootingAnalogSnapshot> {
+    await this.open();
+    const reply = await this.command(WOOTING_COMMAND.getAnalogValues);
+    const decoded = reply ? decodeWootingAnalogSnapshot(reply) : null;
+    if (!decoded) return { available: false, keys: [] };
+    return { available: true, keys: [] };
+  }
+
+  /** Active profile slot for default targeting; 0 when the board stays silent. */
+  private async activeSlotOrDefault(): Promise<number | null> {
+    const reply = await this.command(WOOTING_COMMAND.getCurrentKeyboardProfileIndex);
+    const decoded = reply ? decodeWootingProfileIndex(reply) : null;
+    if (decoded) return decoded.active;
+    return 0;
+  }
+
+  /**
    * Live (uncached) read of the connected profile's actuation / rapid-trigger
    * settings: the current profile index plus the raw analog-profile "main part"
    * reply, for the analog UI to decode.
@@ -317,6 +552,113 @@ export class WootingHidClient {
     return { index: decoded?.active ?? null, reports, note };
   }
 
+  /**
+   * RAM-only profile switch (wootswitch sequence, live-verified no-op-safe):
+   * WootDevInit → ActivateProfile(slot) → settle 100ms → ReloadProfile(slot)
+   * → settle 100ms → verify 0x0b active == slot. Returns the verified slot.
+   * Throws when any step answers 0x66/timeout or the verify mismatches —
+   * the caller surfaces it, never a guessed switch. Invalidates the read
+   * cache after so the next readStatus re-reads the board.
+   *
+   * Live 60HE+ note: this board holds ONE profile (count 1), so switching to
+   * slot 0 verifies clean while slot 7 acks every send yet 0x0b still reads
+   * 0 — the verify throw is the correct outcome, not a driver bug. Boards
+   * with 4 populated slots should move the index; that path is covered by
+   * the fake (which tracks the active slot) until multi-profile hardware
+   * confirms it live.
+   */
+  async switchProfile(slot: number): Promise<number> {
+    await this.open();
+    const [init, activate, reload] = encodeWootingProfileSwitch(slot);
+    const initReply = await this.sendRawWrite(init);
+    if (!initReply || !wootingReplyOk(initReply)) throw new Error(`WootDevInit was not accepted (slot ${slot}).`);
+    const activateReply = await this.sendRawWrite(activate);
+    if (!activateReply || !wootingReplyOk(activateReply)) throw new Error(`ActivateProfile was not accepted (slot ${slot}).`);
+    await wootingDelay(WOOTING_PROFILE_SWITCH_SETTLE_MS);
+    const reloadReply = await this.sendRawWrite(reload);
+    if (!reloadReply || !wootingReplyOk(reloadReply)) throw new Error(`ReloadProfile was not accepted (slot ${slot}).`);
+    await wootingDelay(WOOTING_PROFILE_SWITCH_SETTLE_MS);
+    this.replies.clear();
+    const verify = await this.sendCommand(WOOTING_COMMAND.getCurrentKeyboardProfileIndex).catch(() => null);
+    const active = verify ? decodeWootingProfileIndex(verify)?.active ?? null : null;
+    if (active !== slot) throw new Error(`Profile switch did not stick (wanted ${slot}, board reports ${active}).`);
+    this.replies.clear();
+    return slot;
+  }
+
+  /**
+   * FLASH-persisting save (0x08/0x2A/0x2F/0x35). Requires confirmed: true —
+   * without it the codec encoder throws and nothing is sent. Verifies the
+   * 0x88 reply, invalidates the cache, and returns true. The caller owns the
+   * blocking "overwrites onboard flash" modal.
+   */
+  async saveProfile(commandId: number, slot: number, confirmed: boolean): Promise<boolean> {
+    await this.open();
+    const buffer = encodeWootingSaveCommand(commandId, slot, { confirmed });
+    const reply = await this.sendRawWrite(buffer);
+    if (!reply || !wootingReplyOk(reply)) throw new Error(`Save command 0x${commandId.toString(16)} was not accepted (slot ${slot}).`);
+    this.replies.clear();
+    return true;
+  }
+
+  /**
+   * RAM-only single-key RGB set (0x1E). Live 60HE+ answers 0x88. Returns true
+   * when the board accepts; clears the cache.
+   */
+  async setSingleKeyColor(keyIndex: number, red: number, green: number, blue: number): Promise<boolean> {
+    await this.open();
+    const reply = await this.sendRawWrite(encodeWootingSingleColor(keyIndex, red, green, blue));
+    if (!reply || !wootingReplyOk(reply)) throw new Error(`Single-key color was not accepted (key ${keyIndex}).`);
+    this.replies.clear();
+    return true;
+  }
+
+  /**
+   * RAM-only RGB reset (0x1F single key / 0x20 all). Live 60HE+ answers 0x88
+   * to both. Returns true when accepted; clears the cache.
+   */
+  async resetRgb(keyIndex?: number): Promise<boolean> {
+    await this.open();
+    const buffer = keyIndex === undefined
+      ? encodeWootingCommand(WOOTING_COMMAND.wootDevResetAll, 0, 0, 0, 0, { multiReport: true })
+      : encodeWootingProfileCommand(WOOTING_COMMAND.wootDevResetColor, keyIndex, { multiReport: true });
+    const reply = await this.sendRawWrite(buffer);
+    if (!reply || !wootingReplyOk(reply)) throw new Error("RGB reset was not accepted.");
+    this.replies.clear();
+    return true;
+  }
+
+  /**
+   * RAM-only full-board RGB buffer push (SDK v3 shape, report index 5).
+   * Live note: refresh (0x1D) answers 0x66 on this firmware, so a push the
+   * board will not display returns applied: false (NOT success) — the UI
+   * must show "board kept its profile RGB" rather than a painted preview.
+   */
+  async setRgbBuffer(colors: Uint8Array | readonly number[]): Promise<{ applied: boolean }> {
+    await this.open();
+    const buffer = encodeWootingRgbBuffer(colors);
+    const reportId = buffer[0] ?? 5;
+    const run = this.commandLock.then(async () => {
+      try {
+        await this.device.sendReport(reportId, buffer.slice(1));
+      } catch {
+        return { applied: false };
+      }
+      await wootingDelay(COLLECT_WINDOW_MS);
+      return { applied: true };
+    });
+    this.commandLock = run.then(() => undefined, () => undefined);
+    const result = await run;
+    if (result.applied) this.replies.clear();
+    return result;
+  }
+
+  /** Uncached single write: bypasses `replies`, serialized on commandLock. */
+  private async sendRawWrite(buffer: Uint8Array): Promise<Uint8Array | null> {
+    const run = this.commandLock.then(() => this.probeRawCommand(buffer));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    return run.catch(() => null);
+  }
   /**
    * Send a command and gather every input report it triggers within a short
    * window. `viaOutput` chooses Wootility's output-report channel (id 2) versus
@@ -384,8 +726,13 @@ export class WootingHidClient {
   private async probeRawCommand(buffer: Uint8Array): Promise<Uint8Array | null> {
     const reportId = this.featureReportId();
     const body = wootingFeatureReport(buffer).data;
+    // Byte 3 of the 8-byte buffer is the command id (byte 2 of the body
+    // without the hidapi index byte). Replies echo it, so a stale reply to
+    // an earlier command — or a keypress-shaped report that happens to
+    // start with the magic word — can never resolve this command's waiter.
+    const commandId = buffer[3] ?? -1;
 
-    const inputReply = this.nextInputReport();
+    const inputReply = this.nextInputReport(commandId);
     inputReply.catch(() => {}); // guard: this promise may go unused
 
     try {
@@ -396,13 +743,14 @@ export class WootingHidClient {
     }
 
     const viaInput = await inputReply.catch(() => null);
-    if (viaInput && isWootingReply(viaInput)) return viaInput;
+    if (viaInput && viaInput[2] === commandId && isWootingReply(viaInput)) return viaInput;
 
     this.clearPendingRead();
     const viaFeature = await this.device.receiveFeatureReport(reportId)
       .then((view) => new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
       .catch(() => null);
-    return viaFeature && isWootingReply(viaFeature) ? viaFeature : null;
+    if (viaFeature && viaFeature[2] === commandId && isWootingReply(viaFeature)) return viaFeature;
+    return null;
   }
 
   /** Report id of the config collection's declared feature report (0 if none). */
@@ -411,10 +759,10 @@ export class WootingHidClient {
     return collection?.featureReports?.[0]?.reportId ?? 0;
   }
 
-  /** Resolve with the next input report, or reject on timeout. */
-  private nextInputReport(): Promise<Uint8Array> {
+  /** Resolve with the next input report echoing `commandId`, or reject on timeout. */
+  private nextInputReport(commandId = -1): Promise<Uint8Array> {
     const { promise, resolve, reject } = Promise.withResolvers<Uint8Array>();
-    this.responseWaiter = { resolve, reject };
+    this.responseWaiter = { resolve, reject, commandId };
     this.responseTimer = setTimeout(() => {
       this.clearPendingRead();
       reject(new Error("Wooting keyboard did not answer the config request."));
