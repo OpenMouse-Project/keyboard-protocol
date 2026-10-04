@@ -8,6 +8,7 @@ import {
   decodeWootingKeyIndex,
   decodeWootingAnalogProfileMainPart,
   decodeWootingAnalogProfilesCount,
+  decodeWootingAnalogReport,
   decodeWootingAnalogSnapshot,
   decodeWootingCount,
   decodeWootingDeviceConfig,
@@ -42,12 +43,15 @@ import {
   wootingActuationMm,
   wootingFeatureReport,
   wootingProductName,
+  wootingMatrixKeyId,
   wootingReplyOk,
   wootingSocdModeLabel,
   WOOTING_COMMAND,
   WOOTING_PROFILE_SWITCH_SETTLE_MS,
   WOOTING_RGB_COLS,
   WOOTING_RGB_ROWS,
+  WOOTING_STATUS_ERROR,
+  WOOTING_STATUS_OK,
 } from "./index.ts";
 /** Test-only varint encoder for building profile-blob vectors by hand. */
 function testVarint(value: number): number[] {
@@ -329,11 +333,22 @@ test("decodeWootingAkcProfile names the live A+D Last Input Priority combo", () 
   assert.equal(wootingSocdModeLabel(4), "Last Input Priority");
   assert.equal(combo.inputBothWhenBottomedOut, false);
   assert.deepEqual([...combo.raw], [0x2a, 0x06, 0x08, 0x63, 0x10, 0x04, 0x18, 0x00, 0x40, 0x61, 0x48, 0x00]);
-  assert.deepEqual(decoded.fields.map((entry) => entry.field), [1]);
   assert.deepEqual([...decoded.raw], body);
   assert.deepEqual(decodeWootingKeyIndex(97), { row: 3, col: 1 });
+  assert.deepEqual(decoded.fields.map((entry) => entry.field), [1]);
   assert.equal(decodeWootingKeyIndex(255), null);
   assert.equal(decodeWootingAkcProfile(new Uint8Array([0xd1, 0xda])), null);
+});
+
+test("wootingMatrixKeyId maps firmware matrix to 60% keys", () => {
+  // SDK matrix image: row 3 col 1 = A, row 3 col 3 = D (the live combo).
+  assert.equal(wootingMatrixKeyId(3, 1), "a");
+  assert.equal(wootingMatrixKeyId(3, 3), "d");
+  assert.equal(wootingMatrixKeyId(1, 0), "esc");
+  assert.equal(wootingMatrixKeyId(4, 2), "z");
+  // Function row / gaps have no 60% key — null, never a guess.
+  assert.equal(wootingMatrixKeyId(0, 2), null);
+  assert.equal(wootingMatrixKeyId(3, 12), null);
 });
 
 test("decodeWootingGamepadProfile and decodeWootingGamepadMapping read the live gamepad layer", () => {

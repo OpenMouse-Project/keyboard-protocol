@@ -605,7 +605,43 @@ export function decodeWootingKeyIndex(index: number): WootingKeyIndex | null {
   if (col === 31 && row === 7) return null;
   return { row, col };
 }
+/**
+ * Firmware matrix → UI key id for the 60% layout (from the RGB SDK's
+ * `keyboard-matrix-rows-columns.png`: matrix row 1 = number row, matrix
+ * row 2 = Q row, matrix row 3 = A row, matrix row 4 = Z row, matrix row 5
+ * = bottom row; columns count the Esc column as 0). Only positions present
+ * on a 60% board are listed — function-row, nav-cluster, and numpad
+ */
+const WOOTING_60_MATRIX_TO_KEY: Readonly<Record<string, string>> = {
+  "1:0": "esc",
+  "1:1": "1", "1:2": "2", "1:3": "3", "1:4": "4", "1:5": "5",
+  "1:6": "6", "1:7": "7", "1:8": "8", "1:9": "9", "1:10": "0",
+  "1:11": "minus", "1:12": "equal", "1:13": "backspace",
+  "2:0": "tab",
+  "2:1": "q", "2:2": "w", "2:3": "e", "2:4": "r", "2:5": "t",
+  "2:6": "y", "2:7": "u", "2:8": "i", "2:9": "o", "2:10": "p",
+  "2:11": "lbracket", "2:12": "rbracket", "2:13": "backslash",
+  "3:0": "caps",
+  "3:1": "a", "3:2": "s", "3:3": "d", "3:4": "f", "3:5": "g",
+  "3:6": "h", "3:7": "j", "3:8": "k", "3:9": "l",
+  "3:10": "semicolon", "3:11": "quote", "3:13": "enter",
+  "4:0": "lshift",
+  "4:2": "z", "4:3": "x", "4:4": "c", "4:5": "v", "4:6": "b",
+  "4:7": "n", "4:8": "m", "4:9": "comma", "4:10": "period",
+  "4:11": "slash", "4:13": "rshift",
+  "5:0": "lctrl", "5:1": "lwin", "5:2": "lalt", "5:6": "space",
+  "5:10": "ralt", "5:11": "rctrl", "5:12": "menu", "5:13": "rctrl",
+  "5:14": "fn1",
+};
 
+/**
+ * UI key id for a firmware matrix position, or null when no 60% key lives
+ * there (function-row/nav/numpad columns, ISO extras, gaps). Never guesses:
+ * an unmapped position is null, and the caller renders the raw (row,col).
+ */
+export function wootingMatrixKeyId(row: number, col: number): string | null {
+  return WOOTING_60_MATRIX_TO_KEY[`${row}:${col}`] ?? null;
+}
 /** SOCD mode selector (Wootility `Rt` enum; labels 0–2 unknown). */
 export type WootingSocdMode = 0 | 1 | 2 | 3 | 4;
 
