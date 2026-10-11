@@ -57,6 +57,22 @@ sends only the safe write subset — it never issues factory reset, firmware,
 voice, haptics, displayer or high-polling-rate commands.
 
 
+### BABAO60 HE validation status
+
+Tested through the OpenMouse UI on a BABAO60 HE with protocol firmware 1.2.1.0:
+
+- Actuation travel settings work.
+- Polling rate settings work.
+- Rapid trigger press and release settings work.
+- Press and release dead zone settings work.
+
+Slider dragging and applying trigger settings to multiple selected keys also
+work in the consuming application.
+
+Buttons/key mapping, macros, and lighting still need work. Their existing codecs
+and driver APIs do not imply that the complete configuration flows are finished
+or fully validated. These results apply to the tested board and firmware.
+
 ## Releases
 
 This package follows the same release pipeline as `@openmouse/protocol`:
