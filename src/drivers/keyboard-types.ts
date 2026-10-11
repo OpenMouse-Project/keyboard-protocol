@@ -165,6 +165,8 @@ export interface WuqueStatus {
 }
 
 export interface KeyboardStatus {
+  /** HB68 Windows/Mac mode, verified through both mode queries. */
+  kochi?: { systemMode: import("../kochi/index.js").KochiSystemMode };
   brand: string;
   name: string;
   ui?: KeyboardUiHints;

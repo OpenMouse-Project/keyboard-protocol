@@ -1,7 +1,9 @@
 import { WootingHidClient } from "./wooting/hid.ts";
 import { WuqueHidClient } from "./wuque/hid.ts";
 
-export type SupportedClient = WootingHidClient | WuqueHidClient;
+import { KochiHidClient } from "./kochi/hid.ts";
+
+export type SupportedClient = WootingHidClient | WuqueHidClient | KochiHidClient;
 
 export interface DeviceDriver {
   brand: string;
@@ -11,6 +13,7 @@ export interface DeviceDriver {
 }
 
 export const DEVICE_DRIVERS: readonly DeviceDriver[] = [
+  { brand: "Kochi", supports: (device) => KochiHidClient.isSupported(device), create: (device) => new KochiHidClient(device), score: () => 6 },
   { brand: "Wooting", supports: (device) => WootingHidClient.isSupported(device), create: (device) => new WootingHidClient(device), score: () => 6 },
   { brand: "Wuque Studio", supports: (device) => WuqueHidClient.isSupported(device), create: (device) => new WuqueHidClient(device), score: () => 6 },
 ];

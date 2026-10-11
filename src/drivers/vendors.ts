@@ -1,3 +1,4 @@
+import { KOCHI_VENDOR_ID, KOCHI_HB68_PRODUCT_ID, KOCHI_CONFIG_USAGE_PAGE, KOCHI_CONFIG_USAGE } from "@openmouse/keyboard-protocol/kochi";
 import {
   WOOTING_CONFIG_USAGE,
   WOOTING_CONFIG_USAGE_PAGE,
@@ -14,6 +15,7 @@ import {
 } from "@openmouse/keyboard-protocol/wuque";
 
 export const VENDOR_ID = {
+  kochi: KOCHI_VENDOR_ID,
   wooting: WOOTING_VENDOR_ID,
   wuque: WUQUE_VENDOR_ID,
   wuqueAlt: WUQUE_VENDOR_ID_ALT,
@@ -43,7 +45,14 @@ export const WUQUE_HID_FILTERS: HIDDeviceFilter[] = WUQUE_PRODUCT_IDS.map((produ
   }
 ));
 
+/** Only the HB68 config collection; never its keyboard or streaming usages. */
+export const KOCHI_HID_FILTERS: HIDDeviceFilter[] = [{
+  vendorId: KOCHI_VENDOR_ID, productId: KOCHI_HB68_PRODUCT_ID,
+  usagePage: KOCHI_CONFIG_USAGE_PAGE, usage: KOCHI_CONFIG_USAGE,
+}];
+
 export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
+  ...KOCHI_HID_FILTERS,
   ...WOOTING_HID_FILTERS,
   ...WUQUE_HID_FILTERS,
 ];

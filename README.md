@@ -42,6 +42,12 @@ filters, the driver registry, and shared status types live under
 | --- | --- |
 | Wooting | `@openmouse/keyboard-protocol/wooting` |
 | Wuque Studio | `@openmouse/keyboard-protocol/wuque` |
+| Kochi Hummingbird 68 | `@openmouse/keyboard-protocol/kochi` |
+
+Kochi Hummingbird 68 (`1CA2:0901`) supports reading and changing Windows/Mac
+mode on its `FFA0:1` USB configuration collection. Both directions and mode
+read-back were exercised on hardware on macOS. This is not full keyboard
+configuration support; see [the evidence and limitations](docs/kochi-hb68.md).
 
 An exported protocol means OpenMouse implements that wire format. It does not
 claim every keyboard from that brand works. When a catalog provides a
