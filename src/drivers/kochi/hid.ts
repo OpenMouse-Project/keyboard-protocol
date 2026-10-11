@@ -20,15 +20,41 @@ export class KochiHidClient {
 
   constructor(device: HIDDevice) { this.device = device; }
 
+  /** Exact 1CA2:0901 identity plus a command-capable config collection. */
   static isSupported(device: HIDDevice): boolean {
     return device.vendorId === KOCHI_VENDOR_ID && device.productId === KOCHI_HB68_PRODUCT_ID
-      && device.collections.some(c => c.usagePage === KOCHI_CONFIG_USAGE_PAGE && c.usage === KOCHI_CONFIG_USAGE);
+      && KochiHidClient.configCollection(device.collections) !== null;
+  }
+
+  /**
+   * The command-capable config collection, if this device exposes one. WebHID
+   * permits nested collections, so search children as well: a matching HB68
+   * collection can sit below a top-level application collection.
+   */
+  private static configCollection(
+    collections: readonly HIDCollectionInfo[],
+  ): HIDCollectionInfo | null {
+    for (const collection of collections) {
+      if (collection.usagePage === KOCHI_CONFIG_USAGE_PAGE && collection.usage === KOCHI_CONFIG_USAGE) {
+        return collection;
+      }
+      const nested = KochiHidClient.configCollection(collection.children);
+      if (nested) return nested;
+    }
+    return null;
   }
 
   async open(): Promise<void> {
     if (!KochiHidClient.isSupported(this.device)) throw new Error("Not an HB68 configuration interface.");
     if (this.faulted) throw new Error("Reconnect the HB68 after a failed transaction.");
     if (!this.device.opened) await this.device.open();
+    // close() can land while device.open() is pending and cannot see the
+    // device yet, so recheck after the await: release it instead of installing
+    // a listener or letting a command reach an already-closed session.
+    if (this.faulted) {
+      if (this.device.opened) await this.device.close();
+      throw new Error("Reconnect the HB68 after a failed transaction.");
+    }
     if (!this.listening) {
       this.device.addEventListener("inputreport", this.onReport);
       this.listening = true;

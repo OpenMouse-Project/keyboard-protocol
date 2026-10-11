@@ -73,6 +73,18 @@ test("registry/filter claim only the hardware-identified HB68 command collection
   device.productId--; device.vendorId++; assert.equal(KochiHidClient.isSupported(device.hid), false);
 });
 
+test("a config collection nested under a parent collection is still claimed", () => {
+  const device = new FakeDevice();
+  const nested = device.collections[0]!;
+  device.collections = [{
+    usagePage: 0x0001, usage: 0x06,
+    inputReports: [], outputReports: [], featureReports: [],
+    children: [nested],
+  }];
+  assert.equal(KochiHidClient.isSupported(device.hid), true);
+  assert.ok(createSupportedClient(device.hid) instanceof KochiHidClient);
+});
+
 test("identity and mode are read without firmware, serial, or calibration commands", async () => {
   const device = new FakeDevice(); const client = new KochiHidClient(device.hid);
   const status = await client.readStatus();
@@ -113,6 +125,23 @@ test("timeout and USB failure require a reconnect and never confirm a later oper
     assert.deepEqual(device.sent, [33]);
     await client.close();
   }
+});
+
+test("close during a pending open releases the device without sending a command", async () => {
+  const device = new FakeDevice();
+  let finishOpen!: () => void;
+  const opening = new Promise<void>((resolve) => { finishOpen = resolve; });
+  device.open = async () => { await opening; device.opened = true; };
+  const client = new KochiHidClient(device.hid);
+  const read = client.readSystemMode();
+  // Let the queued exchange reach the suspended device.open().
+  for (let n = 0; n < 5; n++) await Promise.resolve();
+  await client.close();
+  finishOpen();
+  await assert.rejects(read, /Reconnect/);
+  assert.equal(device.opened, false);
+  assert.equal(device.listeners.size, 0);
+  assert.deepEqual(device.sent, []);
 });
 
 test("disconnect rejects pending reads and removes its input listener", async () => {

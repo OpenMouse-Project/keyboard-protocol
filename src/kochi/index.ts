@@ -30,6 +30,7 @@ export function kochiChecksum(frame: Uint8Array): number {
   return (0x35 + frame[0]! + length + frame[2]! + frame[length + 3]!) & 0xff;
 }
 
+/** Encode one of the allowed commands into a 64-byte report frame. */
 export function encodeKochiCommand(command: KochiCommand): Uint8Array<ArrayBuffer> {
   if (!Object.values(KOCHI_COMMAND).includes(command)) throw new RangeError("Unsupported Kochi command.");
   const frame = new Uint8Array(KOCHI_REPORT_SIZE);
@@ -47,6 +48,7 @@ export function kochiReplyPayload(frame: Uint8Array, command: KochiCommand): Uin
   return frame.slice(4, length + 4);
 }
 
+/** Decode the null-terminated product name carried by a name reply. */
 export function decodeKochiName(frame: Uint8Array): string | null {
   const payload = kochiReplyPayload(frame, KOCHI_COMMAND.name);
   if (!payload || payload.length < 34) return null;
@@ -55,17 +57,20 @@ export function decodeKochiName(frame: Uint8Array): string | null {
   return new TextDecoder().decode(end < 0 ? name : name.slice(0, end)).trim() || null;
 }
 
+/** Decode a mode query reply: true when the queried mode is active, null if unsupported. */
 export function decodeKochiModeQuery(frame: Uint8Array, mode: KochiSystemMode): boolean | null {
   const payload = kochiReplyPayload(frame, mode === "win" ? KOCHI_COMMAND.queryWin : KOCHI_COMMAND.queryMac);
   if (!payload || payload.length !== 4 || payload[3] !== 0xff) return null;
   return payload[2] === 0 ? false : payload[2] === 1 ? true : null;
 }
 
+/** True when a write reply acknowledges the requested mode change. */
 export function decodeKochiModeAck(frame: Uint8Array, mode: KochiSystemMode): boolean {
   const payload = kochiReplyPayload(frame, mode === "win" ? KOCHI_COMMAND.setWin : KOCHI_COMMAND.setMac);
   return payload?.length === 4 && payload[2] === 1 && payload[3] === 0xff;
 }
 
+/** Reject any value that is not the Windows or Mac mode literal. */
 export function assertKochiMode(mode: KochiSystemMode): void {
   if (mode !== "win" && mode !== "mac") throw new RangeError("Expected Windows or Mac mode.");
 }
