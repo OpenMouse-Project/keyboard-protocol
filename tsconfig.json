@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2024",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "rootDir": "src",
@@ -19,12 +23,27 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "paths": {
-      "@openmouse/keyboard-protocol": ["./src/index.ts"],
-      "@openmouse/keyboard-protocol/wooting": ["./src/wooting/index.ts"],
-      "@openmouse/keyboard-protocol/wuque": ["./src/wuque/index.ts"],
-      "@openmouse/keyboard-protocol/drivers": ["./src/drivers/index.ts"]
+      "@openmouse/keyboard-protocol": [
+        "./src/index.ts"
+      ],
+      "@openmouse/keyboard-protocol/wooting": [
+        "./src/wooting/index.ts"
+      ],
+      "@openmouse/keyboard-protocol/wuque": [
+        "./src/wuque/index.ts"
+      ],
+      "@openmouse/keyboard-protocol/drivers": [
+        "./src/drivers/index.ts"
+      ],
+      "@openmouse/keyboard-protocol/kochi": [
+        "./src/kochi/index.ts"
+      ]
     }
   },
-  "include": ["src/**/*"],
-  "exclude": ["src/**/*.test.ts"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
+  ]
 }

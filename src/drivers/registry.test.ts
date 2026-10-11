@@ -4,7 +4,7 @@ import test from "node:test";
 import { WootingHidClient } from "./wooting/hid.ts";
 import { WuqueHidClient } from "./wuque/hid.ts";
 import { DEVICE_DRIVERS, clientSupportScore, createSupportedClient, deviceBrand } from "./registry.ts";
-import { SUPPORTED_HID_FILTERS, VENDOR_ID, WOOTING_HID_FILTERS, WUQUE_HID_FILTERS } from "./vendors.ts";
+import { SUPPORTED_HID_FILTERS, KOCHI_HID_FILTERS, VENDOR_ID, WOOTING_HID_FILTERS, WUQUE_HID_FILTERS } from "./vendors.ts";
 import { WOOTING_PRODUCT_IDS, WOOTING_VENDOR_ID } from "@openmouse/keyboard-protocol/wooting";
 import {
   WUQUE_CONFIG_USAGE,
@@ -43,7 +43,7 @@ const WUQUE_DEVICE = (): HIDDevice =>
 test("DEVICE_DRIVERS lists one branded entry per supported protocol", () => {
   assert.deepEqual(
     DEVICE_DRIVERS.map((driver) => driver.brand),
-    ["Wooting", "Wuque Studio"],
+    ["Kochi", "Wooting", "Wuque Studio"],
   );
 });
 
@@ -103,7 +103,7 @@ test("WUQUE_HID_FILTERS pair each product id with its own vendor id", () => {
 });
 
 test("SUPPORTED_HID_FILTERS concatenates the vendor filter sets with no duplicates", () => {
-  assert.deepEqual(SUPPORTED_HID_FILTERS, [...WOOTING_HID_FILTERS, ...WUQUE_HID_FILTERS]);
+  assert.deepEqual(SUPPORTED_HID_FILTERS, [...KOCHI_HID_FILTERS, ...WOOTING_HID_FILTERS, ...WUQUE_HID_FILTERS]);
   const seen = new Set(SUPPORTED_HID_FILTERS.map((f) => `${f.vendorId}:${f.productId}`));
   assert.equal(seen.size, SUPPORTED_HID_FILTERS.length);
 });
