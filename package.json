@@ -5,7 +5,8 @@
   "type": "module",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CONTRIBUTING.md"
   ],
   "exports": {
     ".": {
@@ -15,6 +16,10 @@
     "./wooting": {
       "types": "./dist/wooting/index.d.ts",
       "import": "./dist/wooting/index.js"
+    },
+    "./wuque": {
+      "types": "./dist/wuque/index.d.ts",
+      "import": "./dist/wuque/index.js"
     },
     "./drivers": {
       "types": "./dist/drivers/index.d.ts",
@@ -28,16 +33,30 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.json",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test": "tsx --import ./scripts/fast-test-timers.mjs --test \"src/**/*.test.ts\"",
     "check": "npm run build && npm test && npm pack --dry-run",
     "prepare": "npm run build"
   },
   "devDependencies": {
     "tsx": "^4.23.11",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "semantic-release": "25.0.9"
   },
   "engines": {
     "node": ">=20"
   },
-  "sideEffects": []
+  "sideEffects": [],
+  "license": "AGPL-3.0-or-later",
+  "publishConfig": {
+    "access": "public"
+  },
+  "release": {
+    "branches": [
+      "main"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpenMouse-Project/keyboard-protocol.git"
+  }
 }

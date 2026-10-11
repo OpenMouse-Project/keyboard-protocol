@@ -19,6 +19,18 @@ import type {
   WootingRgbBlock,
   WootingRgbProfileColors,
 } from "@openmouse/keyboard-protocol/wooting";
+import type {
+  WuqueDeviceFeature,
+  WuqueDeviceInfo,
+  WuqueDeviceProtocolVersion,
+  WuqueEffectArea,
+  WuqueLightingBase,
+  WuqueLightingLed,
+  WuqueLightingPaletteColor,
+  WuqueMacroMode,
+  WuqueMacroSpaceInfo,
+  WuqueUsbModeStatus,
+} from "@openmouse/keyboard-protocol/wuque";
 
 export interface KeyboardUiHints {
   /** Stable driver id, e.g. "wooting". */
@@ -97,6 +109,61 @@ export interface WootingAnalogSnapshot {
   keys: readonly WootingAnalogSnapshotKey[];
 }
 
+/** Identity + capability block of a Wuque board (groups 1/2, `[1,1]`/`[1,2]`/`[1,3]`). */
+export interface WuqueDeviceState {
+  protocol: WuqueDeviceProtocolVersion | null;
+  info: WuqueDeviceInfo | null;
+  feature: WuqueDeviceFeature | null;
+}
+
+/** Global settings + diagnostics the 60 HE answers (group 2, group 10, group 18). */
+export interface WuqueGlobalState {
+  systemType: number | null;
+  configSwitch: number | null;
+  reportRates: readonly (string | null)[];
+  sleepTime: number | null;
+  shakeOptimization: boolean | null;
+  rtPrecision: number | null;
+  macroSpace: WuqueMacroSpaceInfo | null;
+  effectAreas: WuqueEffectArea | null;
+  doubleLighting: number | null;
+  specialLighting: number | null;
+  blackout: boolean | null;
+  /** `null` on firmware that does not implement the USB-mode group (60 HE 1.2.x). */
+  usbMode: WuqueUsbModeStatus | null;
+}
+
+/** Keycode layers read from the board: `rows[row][col]`, 6×21 slots. */
+export interface WuqueKeyState {
+  layer: number;
+  rows: readonly (readonly number[])[];
+}
+
+/** Lighting blocks for one area, in the order the board reports them. */
+export interface WuqueLightingState {
+  area: number;
+  base: WuqueLightingBase | null;
+  palette: readonly WuqueLightingPaletteColor[] | null;
+  colorCorrection: { r: number; g: number; b: number } | null;
+  /** First custom page only (15 LEDs); `readLightingCustom` walks all pages. */
+  custom: readonly WuqueLightingLed[] | null;
+}
+
+/** Macro slots: mode headers plus the packed events of each valid slot. */
+export interface WuqueMacroState {
+  space: WuqueMacroSpaceInfo | null;
+  slots: readonly WuqueMacroMode[];
+}
+
+/** Everything the Wuque driver decodes for one connection. */
+export interface WuqueStatus {
+  device: WuqueDeviceState;
+  global: WuqueGlobalState;
+  keys?: WuqueKeyState | null;
+  lighting?: WuqueLightingState | null;
+  macros?: WuqueMacroState | null;
+}
+
 export interface KeyboardStatus {
   brand: string;
   name: string;
@@ -134,4 +201,6 @@ export interface KeyboardStatus {
   diagnostics?: WootingDiagnostics | null;
   /** One-shot analog snapshot (0x14) versus the streaming interface. */
   analogSnapshot?: WootingAnalogSnapshot | null;
+  /** Wuque Studio board state (identity, global settings, keys, lighting, macros). */
+  wuque?: WuqueStatus | null;
 }

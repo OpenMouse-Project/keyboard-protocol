@@ -21,6 +21,7 @@
     "paths": {
       "@openmouse/keyboard-protocol": ["./src/index.ts"],
       "@openmouse/keyboard-protocol/wooting": ["./src/wooting/index.ts"],
+      "@openmouse/keyboard-protocol/wuque": ["./src/wuque/index.ts"],
       "@openmouse/keyboard-protocol/drivers": ["./src/drivers/index.ts"]
     }
   },
