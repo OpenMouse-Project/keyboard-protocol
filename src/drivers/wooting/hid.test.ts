@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { WootingHidClient } from "./hid.ts";
 import { deviceBrand } from "../registry.ts";
-import { WOOTING_VENDOR_ID } from "@openmouse/keyboard-protocol/wooting";
+import {
+  decodeProtobufFields,
+  encodeWootingAkcProfileFromItems,
+  WOOTING_VENDOR_ID,
+} from "@openmouse/keyboard-protocol/wooting";
 
 interface FakeOptions {
   /** Layout byte the fake answers with, "silent" for no reply, "throw" to reject the send. */
@@ -23,6 +27,20 @@ interface FakeOptions {
   blobFields?: Record<number, Array<readonly [number, number]> | null>;
   /** Scalar payload byte answered for count/flash reads; null = error status. */
   scalarReplies?: Record<number, number | null>;
+  /** Simulate firmware applying output command 0x17 for read-back tests. */
+  applyGlobalOutput?: boolean;
+  applyRgbCoreOutput?: boolean;
+  applyAkcOutput?: boolean;
+  applyKeyboardBaseOutput?: boolean;
+  applyActuationOutput?: boolean;
+  /** Simulate firmware applying output 0x1D to the 0x3D per-key RT body. */
+  applyFullRapidTriggerOutput?: boolean;
+  /** Simulate firmware applying output 0x19 to the 0x36 key-property body. */
+  applyKeyPropertyOutput?: boolean;
+  /** Simulate firmware applying output 0x0E/0x0F to color pages. */
+  applyRgbColorsOutput?: boolean;
+  /** Firmware version answered by get_version (default 2.13.0). */
+  firmwareVersion?: readonly [number, number, number];
 }
 
 /** Test-only varint encoder for building blob answers by hand. */
@@ -46,7 +64,7 @@ function fakeBlobAnswer(command: number, nested: Array<readonly [number, number]
 }
 
 function fakeWooting(
-  { reply = 0, channel = "input", productId = 0x1322, usagePage = 0xff55, featureReportId = 1, profileIndex = [0, 0, 1], profileNames = ["Default"], blobFields = {}, blobBodies = {}, scalarReplies = {} }: FakeOptions = {},
+  { reply = 0, channel = "input", productId = 0x1322, usagePage = 0xff55, featureReportId = 1, profileIndex = [0, 0, 1], profileNames = ["Default"], blobFields = {}, blobBodies = {}, scalarReplies = {}, applyGlobalOutput = false, applyRgbCoreOutput = false, applyAkcOutput = false, applyKeyboardBaseOutput = false, applyActuationOutput = false, applyFullRapidTriggerOutput = false, applyKeyPropertyOutput = false, applyRgbColorsOutput = false, firmwareVersion = [2, 13, 0] }: FakeOptions = {},
 ) {
   let inputListener: ((event: HIDInputReportEvent) => void) | null = null;
   const sent: Array<{ reportId: number; data: Uint8Array }> = [];
@@ -54,6 +72,8 @@ function fakeWooting(
   let opened = false;
   let lastCommand = 0;
   let lastSlot = 0;
+  let fakeAkcItems: number[][] = [];
+  let fakeAkcInitialized = false;
   // Fake runtime-active slot: write commands (0x17) move it, 0x0b reads it.
   let fakeActiveSlot = profileIndex ? profileIndex[2] : 0;
   // Echo the command that was just sent; the DEVICE_CONFIG reply (0x13) also
@@ -65,7 +85,7 @@ function fakeWooting(
     response[2] = lastCommand;
     response[3] = 0x88; // OK status
     if (lastCommand === 0x13) response[9] = typeof reply === "number" ? reply : 0;
-    if (lastCommand === 0x01) response.set([0x03, 0x00, 0x02, 0x0d], 4); // version 3.0.2 build 13
+    if (lastCommand === 0x01) response.set([0x03, 0x00, ...firmwareVersion], 4);
     if (lastCommand === 0x09) response[3] = 0x66; // ARM: no direct profile count
     if (lastCommand === 0x0b) {
       if (!profileIndex) return null;
@@ -92,7 +112,7 @@ function fakeWooting(
     }
     // Unlisted profile blobs stay silent (no reply) unless the test opts in
     // via blobFields/blobBodies — never invented.
-    if ([0x14, 0x18, 0x27, 0x28, 0x29, 0x30, 0x31, 0x32, 0x33, 0x34, 0x36, 0x11, 0x12, 0x23, 0x24, 0x39, 0x3b].includes(lastCommand)) {
+    if ([0x14, 0x18, 0x27, 0x28, 0x29, 0x30, 0x31, 0x32, 0x33, 0x34, 0x36, 0x3d, 0x11, 0x12, 0x23, 0x24, 0x39, 0x3b].includes(lastCommand)) {
       return null;
     }
     if (lastCommand in scalarReplies) {
@@ -146,6 +166,50 @@ function fakeWooting(
     },
     sendReport: async (reportId: number, data: Uint8Array) => {
       sentReports.push({ reportId, data: new Uint8Array(data) });
+      if (applyGlobalOutput && reportId === 1 && data[2] === 0x17) {
+        blobBodies[0x33] = [...data.subarray(6, 6 + (data[4] ?? 0))];
+      }
+      if (applyRgbCoreOutput && reportId === 2 && data[2] === 0x16) {
+        blobBodies[0x32] = [...data.subarray(6, 6 + (data[4] ?? 0) + ((data[5] ?? 0) << 8))];
+      }
+      if (applyAkcOutput && data[2] === 0x18) {
+        const body = data.subarray(6, 6 + (data[4] ?? 0) + ((data[5] ?? 0) << 8));
+        const fields = decodeProtobufFields(body);
+        const hasStart = fields.some((field) => field.field === 2);
+        if (!hasStart) {
+          blobBodies[0x34] = [...body];
+        } else {
+          if (!fakeAkcInitialized) {
+            for (const field of decodeProtobufFields(Uint8Array.from(blobBodies[0x34] ?? []))) {
+              if (field.field === 1 && field.bytes) fakeAkcItems.push([...field.bytes]);
+            }
+            fakeAkcInitialized = true;
+          }
+          const start = fields.find((field) => field.field === 2)?.int ?? 0;
+          const total = fields.find((field) => field.field === 3)?.int ?? fakeAkcItems.length;
+          const items = fields.filter((field) => field.field === 1 && field.bytes).map((field) => [...field.bytes!]);
+          fakeAkcItems.splice(start, items.length, ...items);
+          if (start + items.length >= total) fakeAkcItems.length = total;
+          blobBodies[0x34] = [...encodeWootingAkcProfileFromItems(fakeAkcItems.map((item) => Uint8Array.from(item)))];
+        }
+      }
+      if (applyKeyboardBaseOutput && reportId === 1 && data[2] === 0x11 && (data[3]! & 1)) {
+        blobBodies[0x27] = [...data.subarray(6, 6 + (data[4] ?? 0))];
+      }
+      if (applyActuationOutput && data[2] === 0x15 && (data[3]! & 1)) {
+        blobBodies[0x31] = [...data.subarray(6, 6 + (data[4] ?? 0) + ((data[5] ?? 0) << 8))];
+      }
+      if (applyFullRapidTriggerOutput && data[2] === 0x1d && (data[3]! & 1)) {
+        blobBodies[0x3d] = [...data.subarray(6, 6 + (data[4] ?? 0) + ((data[5] ?? 0) << 8))];
+      }
+      if (applyKeyPropertyOutput && data[2] === 0x19 && (data[3]! & 1)) {
+        blobBodies[0x36] = [...data.subarray(6, 6 + (data[4] ?? 0) + ((data[5] ?? 0) << 8))];
+      }
+      if (applyRgbColorsOutput && (data[2] === 0x0e || data[2] === 0x0f) && (data[3]! & 1)) {
+        blobBodies[data[2] === 0x0e ? 0x23 : 0x24] = [
+          ...data.subarray(6, 6 + (data[4] ?? 0) + ((data[5] ?? 0) << 8)),
+        ];
+      }
     },
     receiveFeatureReport: async (_reportId: number) => {
       if (reply === "silent" || reply === "throw" || channel !== "feature") {
@@ -168,6 +232,7 @@ function fakeWooting(
 
 test("isSupported accepts only the config interface", () => {
   assert.equal(WootingHidClient.isSupported(fakeWooting().device), true);
+  assert.equal(WootingHidClient.isSupported(fakeWooting({ productId: 0x1403 }).device), true);
   // The legacy 0xFF00 and analog 0xFF53 collections are not the command
   // interface, so they are rejected (this is what kept the board off the picker
   // twice).
@@ -177,6 +242,237 @@ test("isSupported accepts only the config interface", () => {
   assert.equal(WootingHidClient.isSupported(fakeWooting({ usagePage: 0x1337 }).device), true);
   // Wrong product id (not in the catalog) is rejected.
   assert.equal(WootingHidClient.isSupported(fakeWooting({ productId: 0x0001 }).device), false);
+});
+
+test("per-key actuation edit preserves other keys and verifies device read-back", async () => {
+  const body = [0x22, 0x0c, 0x0a, 0x0a, 0xa0, 0x80, 0xb4, 0xa6, 0x04, 0xcb, 0x80, 0xb4, 0xa6, 0x04];
+  const fake = fakeWooting({ blobBodies: { 0x31: body }, applyActuationOutput: true });
+  const client = new WootingHidClient(fake.device);
+  const read = await client.readPerKeyActuation(1);
+  assert.deepEqual(read?.overrides.map((item) => item.key), [0x20, 0x4b]);
+  await assert.rejects(() => client.editPerKeyActuation(0x20, 0.2, false));
+  assert.equal(await client.editPerKeyActuation(0x20, 0.2, true), true);
+  const result = await client.readPerKeyActuation(1);
+  assert.deepEqual(result?.overrides.map((item) => item.key), [0x4b, 0x20]);
+  assert.equal(result?.overrides.find((item) => item.key === 0x4b)?.actuationMm, read?.overrides[1]?.actuationMm);
+  const ignored = fakeWooting({ blobBodies: { 0x31: body } });
+  await assert.rejects(() => new WootingHidClient(ignored.device).editPerKeyActuation(0x20, 0.2, true), /read-back/);
+});
+
+test("per-key rapid trigger edit saves without touching the base switch and verifies groups", async () => {
+  const rt = [0x0a, 13, 0x08, 0x20, 0x08, 0xad, 0x01, 0x12, 6, 0x08, 0xb3, 0x86, 0x01, 0x18, 1];
+  const fake = fakeWooting({ blobBodies: { 0x3d: rt }, applyFullRapidTriggerOutput: true });
+  const client = new WootingHidClient(fake.device);
+  await assert.rejects(() => client.editPerKeyRapidTrigger(0x20, { sensitivityMm: 0.1 }, false), /requires confirmation/);
+  assert.equal(fake.sentReports.length, 0);
+
+  assert.equal(await client.editPerKeyRapidTrigger(0x20, { sensitivityMm: 0.1, continuous: true }, true), true);
+  assert.equal(fake.sentReports.some((report) => report.data[2] === 0x11), false);
+  const rtWrite = fake.sentReports.find((report) => report.data[2] === 0x1d)!;
+  assert.equal(rtWrite.data[3]! & 1, 1);
+  assert.equal(rtWrite.data[3]! >> 1, 1);
+
+  const after = (await client.readPerKeyRapidTrigger(1))!;
+  assert.equal(after.groups.find((group) => group.keys.includes(0x20))?.config?.primarySensitivityRaw, 16794);
+  assert.equal(after.groups.find((group) => group.keys.includes(0xad))?.config?.primarySensitivityRaw, 17203);
+
+  assert.equal(await client.editPerKeyRapidTrigger(0x20, null, true), true);
+  const removed = (await client.readPerKeyRapidTrigger(1))!;
+  assert.equal(removed.groups.some((group) => group.keys.includes(0x20)), false);
+  assert.equal(removed.groups.find((group) => group.keys.includes(0xad))?.config?.primarySensitivityRaw, 17203);
+
+  const ignored = fakeWooting({ blobBodies: { 0x3d: rt } });
+  await assert.rejects(
+    () => new WootingHidClient(ignored.device).editPerKeyRapidTrigger(0x20, { sensitivityMm: 0.1 }, true),
+    /read-back/,
+  );
+});
+
+test("partial per-key rapid trigger uses 0x36/0x19 and rejects sensitivity", async () => {
+  const partial = [0x12, 6, 0x08, 0xa0, 0x04, 0x08, 0xad, 0x03];
+  const fake = fakeWooting({
+    productId: 0x1230,
+    firmwareVersion: [2, 9, 0],
+    blobBodies: { 0x36: partial },
+    applyKeyPropertyOutput: true,
+  });
+  const client = new WootingHidClient(fake.device);
+  const read = await client.readPerKeyRapidTrigger(1);
+  assert.equal(read?.mode, "partial");
+  assert.deepEqual(read?.groups, [
+    { keys: [0x20], enabled: true, config: null },
+    { keys: [0xad], enabled: false, config: null },
+  ]);
+
+  await assert.rejects(
+    () => client.editPerKeyRapidTrigger(0x20, { sensitivityMm: 0.2 }, true),
+    /requires full per-key RT/,
+  );
+  assert.equal(await client.editPerKeyRapidTrigger(0x20, { enabled: false }, true), true);
+  const after = await client.readPerKeyRapidTrigger(1);
+  assert.deepEqual(after?.groups, [{ keys: [0x20, 0xad], enabled: false, config: null }]);
+
+  const ignored = fakeWooting({
+    productId: 0x1230,
+    firmwareVersion: [2, 9, 0],
+    blobBodies: { 0x36: partial },
+  });
+  await assert.rejects(
+    () => new WootingHidClient(ignored.device).editPerKeyRapidTrigger(0x20, { enabled: false }, true),
+    /read-back/,
+  );
+
+  const standard = fakeWooting({
+    productId: 0x1300,
+    usagePage: 0x1337,
+    firmwareVersion: [2, 13, 0],
+  });
+  const standardClient = new WootingHidClient(standard.device);
+  assert.equal(await standardClient.readPerKeyRapidTrigger(1), null);
+  await assert.rejects(
+    () => standardClient.editPerKeyRapidTrigger(0x20, { enabled: true }, true),
+    /not supported/,
+  );
+});
+
+test("analog default save preserves the keyboard base and verifies the device", async () => {
+  const body = [0x0a, 0x14, 0x08, 0xb3, 0x86, 0x01, 0x10, 1, 0x18, 1, 0x20, 0x9a, 0x83, 0x01, 0x28, 0, 0x30, 2, 0x38, 0, 0x48, 0];
+  const fake = fakeWooting({ blobBodies: { 0x27: body }, applyKeyboardBaseOutput: true });
+  const client = new WootingHidClient(fake.device);
+  await assert.rejects(() => client.writeAnalogDefaults({ actuationMm: 0.3 }, false));
+  assert.equal(fake.sentReports.length, 0);
+  assert.equal(await client.writeAnalogDefaults({ actuationMm: 0.3, rapidTriggerEnabled: false, rapidTriggerSensitivityMm: 0.2 }, true), true);
+  const write = fake.sentReports.find((report) => report.data[2] === 0x11)!;
+  assert.equal(write.data[3]! & 1, 1);
+  assert.equal(write.data[3]! >> 1, 1);
+  assert.equal(write.data[4], 22);
+  assert.deepEqual([...write.data.subarray(6, 10)], [0x0a, 0x14, 0x10, 1]); // digital-output field is preserved
+  const silent = fakeWooting({ blobBodies: { 0x27: body } });
+  await assert.rejects(() => new WootingHidClient(silent.device).writeAnalogDefaults({ actuationMm: 0.3 }, true), /read-back/);
+});
+
+test("global settings write preserves fields and requires device read-back", async () => {
+  const initial = [0x0a, 4, 0x08, 5, 0x10, 10, 0x28, 0x7b];
+  const applied = fakeWooting({ blobBodies: { 0x33: initial }, applyGlobalOutput: true });
+  const client = new WootingHidClient(applied.device);
+  assert.equal(await client.writeGlobalSettings({ rgbDimMinutes: 8 }), true);
+  assert.equal(applied.sentReports.length, 1);
+  assert.deepEqual([...applied.sentReports[0]!.data.subarray(0, 16)],
+    [0xd1, 0xda, 0x17, 0, 8, 0, 0x28, 0x7b, 0x0a, 4, 0x10, 10, 0x08, 8, 0, 0]);
+
+  const ignored = fakeWooting({ blobBodies: { 0x33: initial } });
+  await assert.rejects(() => new WootingHidClient(ignored.device).writeGlobalSettings({ rgbDimMinutes: 8 }),
+    /not confirmed by read-back/);
+});
+
+test("RGB core write requires exact device read-back", async () => {
+  const staticCore = Uint8Array.from([0x0a, 2, 0x08, 1]);
+  const waveCore = Uint8Array.from([0x0a, 2, 0x08, 2]);
+  const applied = fakeWooting({ blobBodies: { 0x32: [...staticCore] }, applyRgbCoreOutput: true });
+  assert.equal(await new WootingHidClient(applied.device).writeRgbProfileCore(0, waveCore), true);
+  assert.deepEqual([...applied.sentReports[0]!.data.subarray(0, 10)],
+    [0xd1, 0xda, 0x16, 0, 4, 0, 0x0a, 2, 0x08, 2]);
+
+  const ignored = fakeWooting({ blobBodies: { 0x32: [...staticCore] } });
+  await assert.rejects(() => new WootingHidClient(ignored.device).writeRgbProfileCore(0, waveCore),
+    /not confirmed by read-back/);
+});
+
+test("profile readers use populated Standard firmware actuation, RT, and DKS replies", async () => {
+  const { device } = fakeWooting({
+    usagePage: 0x1337,
+    blobBodies: {
+      0x31: [0x0a, 4, 0x08, 0xb3, 0x86, 0x01],
+      0x36: [0x0a, 4, 0x08, 1, 0x10, 5],
+      0x18: [0x0a, 1, 0x7f],
+    },
+  });
+  const client = new WootingHidClient(device);
+  assert.equal((await client.readPerKeyActuation(0))?.overrides[0]?.actuationRaw, 17203);
+  assert.equal((await client.readRapidTrigger(0))?.enabled, true);
+  assert.equal((await client.readDks(0))?.cellCount, 3);
+});
+
+test("typed RGB core and color pages read/write with read-back", async () => {
+  const coreBody = [
+    0x0a, 0x13, 0x08, 0xff, 0x01, 0x10, 0xff, 0xff, 0x03, 0x18, 0xff, 0xff, 0x03,
+    0x20, 0xff, 0xff, 0x03, 0x28, 0xff, 0xff, 0x03,
+    0x22, 0x12, 0x0a, 0x08, 0x0a, 0x06, 0x08, 0x00, 0x10, 0x10, 0x18, 0x00,
+    0x0a, 0x06, 0x4a, 0x04, 0x08, 0x7f, 0x10, 0x00,
+  ];
+  const colorsBody = [0x0a, 0x05, 0x0a, 0x03, 0xff, 0xff, 0x03];
+  const fake = fakeWooting({
+    blobBodies: { 0x32: coreBody, 0x23: colorsBody },
+    applyRgbCoreOutput: true,
+    applyRgbColorsOutput: true,
+  });
+  const client = new WootingHidClient(fake.device);
+  const core = await client.readRgbCore(1);
+  assert.equal(core?.layers?.[0]?.kind, "wave");
+  assert.deepEqual((await client.readRgbColors(1, 1))?.rows, [[0xffff]]);
+  assert.equal(await client.writeRgbCore({ base: core!.base, layers: core!.layers }, 1), true);
+  await assert.rejects(() => client.writeRgbColors(1, [[0x001f]], false), /confirmation/);
+  assert.equal(await client.writeRgbColors(1, [[0x001f]], true, 1), true);
+  assert.deepEqual((await client.readRgbColors(1, 1))?.rows, [[0x001f]]);
+
+  const ignored = fakeWooting({ blobBodies: { 0x32: coreBody, 0x23: colorsBody } });
+  await assert.rejects(
+    () => new WootingHidClient(ignored.device).writeRgbColors(1, [[0x001f]], true, 1),
+    /read-back/,
+  );
+});
+
+test("AKC save requires confirmation and verifies the persisted body", async () => {
+  const initial = [0x0a, 2, 0x40, 0x61];
+  const edited = Uint8Array.from([0x0a, 2, 0x40, 0x62]);
+  const applied = fakeWooting({ blobBodies: { 0x34: initial }, applyAkcOutput: true });
+  const client = new WootingHidClient(applied.device);
+  await assert.rejects(() => client.writeAkcProfile(0, edited, false), /requires confirmation/);
+  assert.equal(applied.sentReports.length, 0);
+  assert.equal(await client.writeAkcProfile(0, edited, true), true);
+  assert.equal(applied.sentReports[0]?.data[2], 0x18);
+  assert.ok(applied.sent.some((entry) => entry.data[2] === 0x35));
+
+  const ignored = fakeWooting({ blobBodies: { 0x34: initial } });
+  await assert.rejects(() => new WootingHidClient(ignored.device).writeAkcProfile(0, edited, true),
+    /not confirmed by read-back/);
+});
+
+test("chunked AKC writes handle profiles larger than one report", async () => {
+  const items = Array.from({ length: 12 }, (_, index) => Uint8Array.from([
+    0x1a, 2, 0x08, index, 0x40, 0x20 + index, 0x48, 0,
+  ]));
+  const complete = encodeWootingAkcProfileFromItems(items);
+  const fake = fakeWooting({ blobBodies: { 0x34: [] }, applyAkcOutput: true });
+  const client = new WootingHidClient(fake.device);
+  assert.equal(await client.writeAkcProfileChunked(0, complete, true), true);
+  const read = await client.readAkc(0);
+  assert.equal(read?.combos.length, 12);
+  assert.equal(fake.sentReports.filter((report) => report.data[2] === 0x18).length, 2);
+});
+
+test("AKC item editing preserves an existing SOCD binding through add and remove", async () => {
+  const initial = [
+    0x0a, 0x0c, 0x2a, 0x06, 0x08, 0x63, 0x10, 4, 0x18, 0,
+    0x40, 0x61, 0x48, 0, 0x10, 0, 0x18, 1,
+  ];
+  const fake = fakeWooting({ blobBodies: { 0x34: initial }, applyAkcOutput: true });
+  const client = new WootingHidClient(fake.device);
+  assert.equal(await client.editAkcItem(0, 0xab, 0, { kind: "toggleKey", keybind: 0x77 }, true), true);
+  assert.equal(fake.sentReports[0]?.reportId, 2);
+  assert.deepEqual([...fake.sentReports[0]!.data.subarray(6, 20)], initial.slice(0, 14));
+  assert.equal(await client.editAkcItem(0, 0xab, 0, null, true), true);
+  assert.equal(fake.sentReports[1]?.reportId, 1);
+  assert.deepEqual([...fake.sentReports[1]!.data.subarray(6, 24)], initial);
+});
+
+test("Standard config collection uses single-report framing", async () => {
+  const { device, sent } = fakeWooting({ productId: 0x1300, usagePage: 0x1337, featureReportId: 0 });
+  const client = new WootingHidClient(device);
+  await client.readStatus();
+  assert.equal(sent[0]?.reportId, 0);
+  assert.deepEqual([...sent[0]!.data.slice(0, 3)], [0xd0, 0xda, 0x01]);
+  await client.close();
 });
 
 test("readStatus identifies the board with firmware, layout and profiles", async () => {
@@ -194,6 +490,7 @@ test("readStatus identifies the board with firmware, layout and profiles", async
       0x14: zeroBody,
       0x29: [0x0a, 0x1c, 0x0a, 0x04, 0x08, 0x00, 0x10, 0x14, 0x0a, 0x04, 0x08, 0x3c, 0x10, 0x3c, 0x0a, 0x06, 0x08, 0xc2, 0x01, 0x10, 0xc3, 0x01, 0x0a, 0x06, 0x08, 0xfd, 0x01, 0x10, 0xff, 0x01, 0x12, 0x08, 0x08, 0x00, 0x10, 0x00, 0x18, 0x01, 0x20, 0x32],
       0x34: [0x0a, 0x0c, 0x2a, 0x06, 0x08, 0x63, 0x10, 0x04, 0x18, 0x00, 0x40, 0x61, 0x48, 0x00, 0x10, 0x00, 0x18, 0x01],
+      0x3d: [0x0a, 13, 0x08, 0x20, 0x08, 0xad, 0x01, 0x12, 6, 0x08, 0xb3, 0x86, 0x01, 0x18, 1],
       0x32: [0x0a, 0x13, 0x08, 0xff, 0x01, 0x10, 0xff, 0xff, 0x03, 0x18, 0xff, 0xff, 0x03, 0x20, 0xff, 0xff, 0x03, 0x28, 0xff, 0xff, 0x03, 0x22, 0x08, 0x0a, 0x06, 0x4a, 0x04, 0x08, 0x7f, 0x10, 0x00],
       0x23: [0x0a, 0x2b, 0x0a, 0x29, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0xbf, 0x07, 0xbf, 0x07, 0xbf, 0x07, 0xbf, 0x07, 0x9f, 0x0e, 0x9f, 0x0e, 0x9f, 0x0e, 0x9f, 0x0e, 0xf1, 0x0f, 0xf1, 0x0f, 0xf1, 0x0f, 0xf1, 0x0f, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01],
       0x24: [0x0a, 0x2b, 0x0a, 0x29, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0xbf, 0x07, 0xbf, 0x07, 0xbf, 0x07, 0xbf, 0x07, 0x9f, 0x0e, 0x9f, 0x0e, 0x9f, 0x0e, 0x9f, 0x0e, 0xf1, 0x0f, 0xf1, 0x0f, 0xf1, 0x0f, 0xf1, 0x0f, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01],
@@ -350,6 +647,7 @@ test("read* helpers decode one feature each and cache per slot", async () => {
       0x30: mapBody,
       0x29: [0x0a, 0x1c, 0x0a, 0x04, 0x08, 0x00, 0x10, 0x14, 0x0a, 0x04, 0x08, 0x3c, 0x10, 0x3c, 0x0a, 0x06, 0x08, 0xc2, 0x01, 0x10, 0xc3, 0x01, 0x0a, 0x06, 0x08, 0xfd, 0x01, 0x10, 0xff, 0x01, 0x12, 0x08, 0x08, 0x00, 0x10, 0x00, 0x18, 0x01, 0x20, 0x32],
       0x34: [0x0a, 0x0c, 0x2a, 0x06, 0x08, 0x63, 0x10, 0x04, 0x18, 0x00, 0x40, 0x61, 0x48, 0x00, 0x10, 0x00, 0x18, 0x01],
+      0x3d: [0x0a, 13, 0x08, 0x20, 0x08, 0xad, 0x01, 0x12, 6, 0x08, 0xb3, 0x86, 0x01, 0x18, 1],
       0x32: [0x0a, 0x13, 0x08, 0xff, 0x01, 0x10, 0xff, 0xff, 0x03, 0x18, 0xff, 0xff, 0x03, 0x20, 0xff, 0xff, 0x03, 0x28, 0xff, 0xff, 0x03, 0x22, 0x08, 0x0a, 0x06, 0x4a, 0x04, 0x08, 0x7f, 0x10, 0x00],
       0x23: [0x0a, 0x2b, 0x0a, 0x29, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0xbf, 0x07, 0xbf, 0x07, 0xbf, 0x07, 0xbf, 0x07, 0x9f, 0x0e, 0x9f, 0x0e, 0x9f, 0x0e, 0x9f, 0x0e, 0xf1, 0x0f, 0xf1, 0x0f, 0xf1, 0x0f, 0xf1, 0x0f, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01],
       0x24: [0x0a, 0x2b, 0x0a, 0x29, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0xbf, 0x07, 0xbf, 0x07, 0xbf, 0x07, 0xbf, 0x07, 0x9f, 0x0e, 0x9f, 0x0e, 0x9f, 0x0e, 0x9f, 0x0e, 0xf1, 0x0f, 0xf1, 0x0f, 0xf1, 0x0f, 0xf1, 0x0f, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01, 0xe0, 0xdf, 0x01],
@@ -378,6 +676,10 @@ test("read* helpers decode one feature each and cache per slot", async () => {
   const akc = (await client.readAkc(1))!;
   assert.equal(akc.combos.length, 1);
 
+  const perKeyRt = (await client.readPerKeyRapidTrigger(1))!;
+  assert.deepEqual(perKeyRt.groups[0]?.keys, [0x20, 0xad]);
+  assert.equal(perKeyRt.groups[0]?.config?.primarySensitivityRaw, 17203);
+
   const gamepad = (await client.readGamepad(1))!;
   // 0x28 answers empty on ARM, so mapping stays null; binds live in 0x29 (mode 1).
   assert.equal(gamepad.mapping, null);
@@ -402,6 +704,7 @@ test("read* helpers decode one feature each and cache per slot", async () => {
   // Slot reads are cached: repeating every helper sends nothing new.
   const sentAfterFirst = sent.length;
   await client.readAnalogProfileFull(1);
+  await client.readPerKeyRapidTrigger(1);
   await client.readMappings(1);
   await client.readDks(1);
   await client.readGamepad(1);
@@ -418,6 +721,7 @@ test("read* helpers report nulls on a silent board, never invented data", async 
   assert.equal(await client.readAnalogProfileFull(0), null);
   assert.equal(await client.readPerKeyActuation(0), null);
   assert.equal(await client.readRapidTrigger(0), null);
+  assert.equal(await client.readPerKeyRapidTrigger(0), null);
   assert.equal(await client.readMappings(0), null);
   assert.equal(await client.readDks(0), null);
   assert.equal(await client.readAkc(0), null);
@@ -488,6 +792,13 @@ test("setRgbBuffer pushes the v3 report to index 5", async () => {
   assert.equal(sentReports.length, 1);
   assert.equal(sentReports[0]?.reportId, 5);
   assert.deepEqual([...(sentReports[0]?.data.subarray(0, 3) ?? [])], [0xd1, 0xda, 11]);
+});
+
+test("RGB buffer is not reported applied when refresh is rejected", async () => {
+  const { device, sentReports } = fakeWooting({ scalarReplies: { 0x1d: null } });
+  const client = new WootingHidClient(device);
+  assert.deepEqual(await client.setRgbBuffer(new Uint8Array(6 * 21 * 2)), { applied: false });
+  assert.equal(sentReports.length, 1);
 });
 
 test("keypress-shaped input reports never resolve a pending command read", async () => {

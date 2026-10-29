@@ -26,15 +26,56 @@ import {
   decodeWootingProfileFields,
   decodeWootingProfileIndex,
   decodeWootingProfileMetadata,
+  decodeWootingFullRapidTriggerProfile,
+  decodeWootingKeyPropertyProfile,
+  decodeWootingKeyPropertyProfileBody,
+  decodeWootingPartialRapidTriggerProfile,
   decodeWootingRapidTriggerProfile,
+  decodeWootingRapidTriggerProfileBody,
   decodeWootingRgbBins,
+  decodeWootingRgbColors,
+  decodeWootingRgbCore,
   decodeWootingRgbLayer,
+  encodeWootingRgbColors,
+  createWootingRgbStaticCore,
+  encodeWootingRgbColorsReport,
+  encodeWootingRgbCore,
+  wootingColorToRgb565,
+  wootingRgb565ToColor,
+  wootingRgbLayerLimit,
   decodeWootingRgbProfileColors,
   decodeWootingRgbProfileCore,
   decodeWootingRgbProfileCount,
   decodeWootingVersion,
   encodeWootingCommand,
+  encodeWootingActuationOverrides,
+  encodeWootingActuationProfileReport,
+  patchWootingActuationProfile,
+  encodeWootingRapidTriggerOverrides,
+  encodeWootingRapidTriggerProfileGroups,
+  encodeWootingRapidTriggerProfileReport,
+  encodeWootingDksPayload,
+  encodeWootingKeyPropertyProfile,
+  encodeWootingKeyPropertyProfileReport,
+  patchWootingKeyPropertyProfile,
+  patchWootingRapidTriggerProfile,
+  compareWootingVersions,
+  wootingCapabilities,
+  wootingKeyPropertyGroups,
+  wootingModel,
+  wootingVersionAtLeast,
+  encodeWootingGlobalSettingsReport,
+  encodeWootingRgbProfileCoreReport,
+  encodeWootingAkcProfileReport,
+  encodeWootingAkcProfileFromItems,
+  encodeWootingAkcChunks,
+  encodeWootingAkcChunkReport,
+  encodeWootingAkcItem,
+  encodeWootingAkcPayload,
+  patchWootingAkcProfile,
+  patchWootingGlobalSettings,
   encodeWootingProfileCommand,
+  encodeWootingProfileSelectorCommand,
   encodeWootingProfileSwitch,
   encodeWootingRgbBuffer,
   encodeWootingSaveCommand,
@@ -43,7 +84,9 @@ import {
   wootingActuationMm,
   wootingFeatureReport,
   wootingProductName,
+  wootingProfileSelector,
   wootingMatrixKeyId,
+  wootingJitActivationLabel,
   wootingReplyOk,
   wootingSocdModeLabel,
   WOOTING_COMMAND,
@@ -99,6 +142,17 @@ test("encodeWootingProfileCommand places the slot per firmware variant", () => {
   assert.deepEqual([...arm], [0x01, 0xd1, 0xda, 0x37, 0x02, 0x00, 0x00, 0x00]);
   const standard = encodeWootingProfileCommand(WOOTING_COMMAND.getDigitalProfile, 1, { multiReport: false });
   assert.deepEqual([...standard], [0x00, 0xd0, 0xda, 0x0c, 0x00, 0x00, 0x00, 0x01]);
+});
+
+test("profile selectors encode onboard/linked identity and the active sentinel", () => {
+  assert.equal(wootingProfileSelector({ index: 2, namespace: "onboard" }), 2);
+  assert.equal(wootingProfileSelector({ index: 2, namespace: "linked" }), 0x102);
+  assert.equal(wootingProfileSelector(null), 0xffff);
+  assert.deepEqual(
+    [...encodeWootingProfileSelectorCommand(WOOTING_COMMAND.getFullRapidTriggerProfile, { index: 2, namespace: "linked" })],
+    [0x01, 0xd1, 0xda, 0x3d, 0x02, 0x01, 0x00, 0x00],
+  );
+  assert.throws(() => wootingProfileSelector({ index: 32, namespace: "onboard" }));
 });
 
 test("wootingFeatureReport splits off the hidapi report-index byte", () => {
@@ -394,14 +448,30 @@ test("RGB decoders preserve the live core, colours, and bins blocks", () => {
   assert.equal(decodeWootingRgbBins(new Uint8Array([0xd1, 0xda])), null);
 });
 
-test("decodeWootingGlobalSettings preserves the live config bytes", () => {
-  // Live 60HE+ 0x33 body (8 bytes): field-1 config row `08 05 10 0a`.
+test("decodeWootingGlobalSettings reads Wootility's sleep and lock fields", () => {
+  // Live 60HE+ 0x33 body: RGB dims after 5 min, turns off after 10 min;
+  // field 2 leaves Num Lock uninverted.
   const body = [0x0a, 0x04, 0x08, 0x05, 0x10, 0x0a, 0x10, 0x00];
   const reply = new Uint8Array([0xd1, 0xda, WOOTING_COMMAND.getSettings, WOOTING_STATUS_OK, body.length, 0x00, ...body]);
   const decoded = decodeWootingGlobalSettings(reply)!;
   assert.deepEqual([...(decoded.config ?? [])], [0x08, 0x05, 0x10, 0x0a]);
+  assert.deepEqual(decoded.rgbSleep, { dimMinutes: 5, offMinutes: 10, turnOff: null });
+  assert.equal(decoded.invertNumLock, false);
+  assert.equal(decoded.debounceFilter, null);
+  assert.equal(decoded.deviceName, null);
   assert.deepEqual(decoded.fields.map((entry) => entry.field), [1]);
   assert.ok(decoded.raw.length > 0);
+  const extendedBody = [0x0a, 0x06, 0x08, 0x03, 0x10, 0x14, 0x18, 0x01, 0x10, 0x01, 0x18, 0x01, 0x22, 0x03, 0x57, 0x36, 0x30];
+  const extended = decodeWootingGlobalSettings(new Uint8Array([
+    0xd1, 0xda, WOOTING_COMMAND.getSettings, WOOTING_STATUS_OK, extendedBody.length, 0, ...extendedBody,
+  ]))!;
+  assert.deepEqual(extended.rgbSleep, { dimMinutes: 3, offMinutes: 20, turnOff: true });
+  assert.equal(extended.invertNumLock, true);
+  assert.equal(extended.debounceFilter, true);
+  assert.equal(extended.deviceName, "W60");
+  assert.equal(decodeWootingGlobalSettings(new Uint8Array([
+    0xd1, 0xda, WOOTING_COMMAND.getSettings, WOOTING_STATUS_OK, body.length + 1, 0, ...body,
+  ])), null);
   assert.equal(
     decodeWootingGlobalSettings(
       new Uint8Array([0xd1, 0xda, WOOTING_COMMAND.getSettings, WOOTING_STATUS_ERROR, 0x00, 0x00]),
@@ -418,7 +488,7 @@ test("decodeWootingKeyboardProfile reads the live actuation and rapid trigger", 
   assert.equal(decoded.actuationRaw, 17203);
   assert.ok(Math.abs(decoded.actuationMm! - 0.199951171875) < 1e-9);
   assert.equal(decoded.rapidTriggerEnabled, true);
-  assert.equal(decoded.pressSensitivityRaw, 1);
+  assert.equal(decoded.pressSensitivityRaw, 16794);
   assert.equal(decoded.releaseSensitivityRaw, 16794);
   assert.equal(decoded.curvePreset, 2);
   assert.equal(decoded.continuousRapidTrigger, false);
@@ -507,7 +577,432 @@ test("encodeWootingSingleColor and encodeWootingRgbBuffer match the SDK shapes",
   assert.throws(() => encodeWootingRgbBuffer(new Uint8Array(10)));
 });
 
-test("wootingProductName knows the 60HE+ and falls back otherwise", () => {
+test("wootingProductName resolves catalog models and low-nibble variants", () => {
   assert.equal(wootingProductName(0x1322), "Wooting 60HE+");
+  assert.equal(wootingProductName(0x1320), "Wooting 60HE+");
+  assert.equal(wootingProductName(0x1403), "Wooting 80HE");
+  assert.equal(wootingProductName(0x1510), "Wooting UwU RGB");
   assert.equal(wootingProductName(0xffff), "Wooting keyboard");
+});
+
+test("actuation override output matches the captured 60HE+ save packets", () => {
+  const write = encodeWootingActuationOverrides(1, [
+    { key: 0x20, actuationMm: 0.3 },
+    { key: 0xad, actuationMm: 0.3 },
+  ]);
+  assert.equal(write.reportId, 1);
+  assert.equal(write.data.length, 32);
+  assert.deepEqual([...write.data.subarray(0, 20)], [
+    0xd1, 0xda, 0x15, 1, 14, 0, 0x22, 12,
+    0x08, 0xa0, 0x80, 0xb4, 0xa6, 0x04,
+    0x08, 0xad, 0x81, 0xb4, 0xa6, 0x04,
+  ]);
+  const cleared = encodeWootingActuationOverrides(1, []);
+  assert.deepEqual([...cleared.data], [0xd1, 0xda, 0x15, 1, ...new Array(28).fill(0)]);
+  assert.throws(() => encodeWootingActuationOverrides(1, [{ key: 1, actuationMm: 4.1 }]));
+});
+
+test("packed ARM actuation profile edits retain other keys and choose report size", () => {
+  const packed = new Uint8Array([0x22, 0x0c, 0x0a, 0x0a, 0xa0, 0x80, 0xb4, 0xa6, 0x04, 0xcb, 0x80, 0xb4, 0xa6, 0x04]);
+  const changed = patchWootingActuationProfile(packed, 0x20, 0.25);
+  const packet = encodeWootingActuationProfileReport(changed);
+  assert.equal(packet.reportId, 1);
+  assert.equal(packet.data[3], 1);
+  const reply = new Uint8Array([0xd1, 0xda, WOOTING_COMMAND.getActuationProfile, WOOTING_STATUS_OK, changed.length, 0, ...changed]);
+  const values = decodeWootingActuationProfile(reply)!.overrides;
+  assert.deepEqual(values.map((entry) => entry.key), [0x4b, 0x20]);
+  assert.equal(values[0]!.actuationRaw, 17613);
+  assert.equal(values[1]!.actuationRaw, 17408);
+  assert.deepEqual([...patchWootingActuationProfile(changed, 0x20, null)], [0x22, 0x06, 0x08, 0xcb, 0x80, 0xb4, 0xa6, 0x04]);
+  assert.equal(encodeWootingActuationProfileReport(new Uint8Array(27)).reportId, 2);
+});
+
+test("rapid trigger output matches the captured 60HE+ save packets", () => {
+  const write = encodeWootingRapidTriggerOverrides(1, [0x20, 0xad], 0.2, true);
+  assert.equal(write.reportId, 1);
+  assert.deepEqual([...write.data.subarray(0, 21)], [
+    0xd1, 0xda, 0x1d, 1, 15, 0, 0x0a, 13,
+    0x08, 0x20, 0x08, 0xad, 0x01, 0x12, 6,
+    0x08, 0xb3, 0x86, 0x01, 0x18, 1,
+  ]);
+  assert.deepEqual([...encodeWootingRapidTriggerOverrides(1, [], 0.1, false).data], [
+    0xd1, 0xda, 0x1d, 1, ...new Array(28).fill(0),
+  ]);
+});
+
+test("decodeWootingFullRapidTriggerProfile reads per-key config and enabled groups", () => {
+  // Group 1: captured 0x1D payload, keys 0x20/0xad at 0.20mm with continuous on.
+  // Group 2: packed keys with a bare enabled=false value.
+  const body = [
+    0x0a, 13, 0x08, 0x20, 0x08, 0xad, 0x01, 0x12, 6, 0x08, 0xb3, 0x86, 0x01, 0x18, 1,
+    0x0a, 7, 0x0a, 3, 0x20, 0xad, 0x01, 0x18, 0,
+  ];
+  const reply = new Uint8Array([0xd1, 0xda, WOOTING_COMMAND.getFullRapidTriggerProfile, WOOTING_STATUS_OK, body.length, 0, ...body]);
+  const decoded = decodeWootingFullRapidTriggerProfile(reply)!;
+  assert.deepEqual(decoded.groups, [
+    {
+      keys: [0x20, 0xad],
+      enabled: null,
+      config: {
+        primarySensitivityRaw: 17203,
+        primarySensitivityMm: (17203 - 16384) / 4096,
+        secondarySensitivityRaw: null,
+        secondarySensitivityMm: null,
+        continuousMode: true,
+      },
+    },
+    { keys: [0x20, 0xad], enabled: false, config: null },
+  ]);
+  assert.deepEqual([...decoded.raw], body);
+
+  // Live 60HE+ reply: firmware returns the keys packed even though Wootility
+  // wrote them unpacked.
+  const hardware = decodeWootingFullRapidTriggerProfile(Uint8Array.from([
+    0xd1, 0xda, 0x3d, 0x88, 0x0f, 0,
+    0x0a, 0x0d, 0x0a, 0x03, 0x20, 0xad, 0x01, 0x12, 0x06, 0x08, 0xb3, 0x86, 0x01, 0x18, 0x01,
+  ]));
+  assert.deepEqual(hardware?.groups[0]?.keys, [0x20, 0xad]);
+  assert.equal(hardware?.groups[0]?.config?.primarySensitivityRaw, 17203);
+
+  const empty = decodeWootingFullRapidTriggerProfile(
+    new Uint8Array([0xd1, 0xda, WOOTING_COMMAND.getFullRapidTriggerProfile, WOOTING_STATUS_OK, 0, 0]),
+  );
+  assert.deepEqual(empty?.groups, []);
+  assert.equal(decodeWootingFullRapidTriggerProfile(
+    new Uint8Array([0xd1, 0xda, WOOTING_COMMAND.getFullRapidTriggerProfile, WOOTING_STATUS_ERROR, 0, 0]),
+  ), null);
+});
+
+test("full rapid-trigger groups encode the captured packet and report flags", () => {
+  const body = encodeWootingRapidTriggerProfileGroups([
+    { keys: [0x20, 0xad], config: { sensitivityMm: 0.2, continuous: true } },
+  ]);
+  assert.deepEqual([...body], [0x0a, 13, 0x08, 0x20, 0x08, 0xad, 0x01, 0x12, 6, 0x08, 0xb3, 0x86, 0x01, 0x18, 1]);
+
+  const saved = encodeWootingRapidTriggerProfileReport(body, { save: true });
+  assert.equal(saved.reportId, 1);
+  assert.deepEqual([...saved.data.subarray(0, 21)], [
+    0xd1, 0xda, 0x1d, 1, 15, 0, 0x0a, 13,
+    0x08, 0x20, 0x08, 0xad, 0x01, 0x12, 6,
+    0x08, 0xb3, 0x86, 0x01, 0x18, 1,
+  ]);
+  // bit 0 save, bits 1–5 profile index, bits 6–7 namespace.
+  const linked = encodeWootingRapidTriggerProfileReport(body, { profileIndex: 2, namespace: "linked" });
+  assert.equal(linked.data[3], 0x44);
+  assert.equal(encodeWootingRapidTriggerProfileReport(new Uint8Array(27)).reportId, 2);
+  assert.throws(() => encodeWootingRapidTriggerProfileReport(body, { profileIndex: 32 }));
+});
+
+test("full rapid-trigger groups split at ten keys and reject duplicates", () => {
+  const keys = Array.from({ length: 11 }, (_, index) => index + 1);
+  const groups = decodeWootingRapidTriggerProfileBody(
+    encodeWootingRapidTriggerProfileGroups([{ keys, config: { sensitivityMm: 0.1 } }]),
+  );
+  assert.deepEqual(groups.map((group) => group.keys.length), [10, 1]);
+  assert.throws(() => encodeWootingRapidTriggerProfileGroups([
+    { keys: [1, 2], config: { sensitivityMm: 0.1 } },
+    { keys: [2, 3], config: { sensitivityMm: 0.2 } },
+  ]), /Duplicate/);
+});
+
+test("patchWootingRapidTriggerProfile edits one key and preserves everything else", () => {
+  const captured = Uint8Array.from([0x0a, 13, 0x08, 0x20, 0x08, 0xad, 0x01, 0x12, 6, 0x08, 0xb3, 0x86, 0x01, 0x18, 1]);
+  const changed = decodeWootingRapidTriggerProfileBody(
+    patchWootingRapidTriggerProfile(captured, 0x20, { sensitivityMm: 0.1, continuous: true }),
+  );
+  assert.deepEqual(changed.map((group) => group.keys), [[0xad], [0x20]]);
+  assert.equal(changed[1]!.config?.primarySensitivityRaw, 16794);
+
+  const merged = decodeWootingRapidTriggerProfileBody(
+    patchWootingRapidTriggerProfile(captured, 0x20, { sensitivityMm: 0.2, continuous: true }),
+  );
+  assert.equal(merged.length, 1);
+  assert.deepEqual(merged[0]!.keys, [0xad, 0x20]);
+
+  const removed = decodeWootingRapidTriggerProfileBody(patchWootingRapidTriggerProfile(captured, 0xad, null));
+  assert.deepEqual(removed.map((group) => group.keys), [[0x20]]);
+
+  const disabled = decodeWootingRapidTriggerProfileBody(
+    patchWootingRapidTriggerProfile(captured, 0xab, { enabled: false }),
+  );
+  assert.deepEqual(disabled.map((group) => [group.keys, group.enabled]), [
+    [[0x20, 0xad], null],
+    [[0xab], false],
+  ]);
+  assert.deepEqual([...patchWootingRapidTriggerProfile(captured, 0x20, null).subarray(0, 8)],
+    [0x0a, 11, 0x08, 0xad, 0x01, 0x12, 6, 0x08]);
+});
+
+test("rapid-trigger edits keep unknown fields and reject duplicates", () => {
+  // Unknown top-level field 2 and unknown field 5 inside a group that keeps
+  // key 0x21 after key 0x20 moves to a different sensitivity.
+  const inner = [0x08, 0x20, 0x08, 0x21, 0x28, 5, 0x12, 6, 0x08, 0xb3, 0x86, 0x01, 0x18, 1];
+  const message = Uint8Array.from([0x10, 0x7f, 0x0a, inner.length, ...inner]);
+  const edited = patchWootingRapidTriggerProfile(message, 0x20, { sensitivityMm: 0.3 });
+  const fields = decodeProtobufFields(edited);
+  assert.equal(fields.find((field) => field.field === 2)?.int, 0x7f);
+  const group = decodeProtobufFields(fields.find((field) => field.field === 1)?.bytes!)!;
+  assert.equal(group.find((field) => field.field === 5)?.int, 5);
+  const moved = decodeWootingRapidTriggerProfileBody(edited).find((group) => group.keys.includes(0x20));
+  assert.equal(moved?.config?.primarySensitivityRaw, 17613);
+
+  assert.throws(
+    () => patchWootingRapidTriggerProfile(Uint8Array.from([0x0a, 4, 0x08, 1, 0x08, 1]), 2, null),
+    /Duplicate/,
+  );
+});
+
+test("wootingCapabilities maps models, transports, and firmware gates", () => {
+  assert.equal(wootingModel(0x1322)?.name, "Wooting 60HE+");
+  assert.equal(wootingModel(0x2402)?.name, "Wooting One");
+  assert.equal(wootingModel(0xffff), null);
+
+  const full = wootingCapabilities(0x1322, "2.13.0");
+  assert.equal(full.transport, "arm");
+  assert.equal(full.perKeyRapidTrigger, "full");
+  assert.equal(full.perKeyRapidTriggerMaxGroups, 30);
+  assert.equal(full.perKeyActuation, true);
+
+  const oldArm = wootingCapabilities(0x1310, "2.9.0");
+  assert.equal(oldArm.perKeyRapidTrigger, "partial");
+  assert.equal(oldArm.perKeyRapidTriggerMaxGroups, 10);
+
+  assert.equal(wootingCapabilities(0x1230, "2.13.0").perKeyRapidTrigger, "full");
+  assert.equal(wootingCapabilities(0x1500, null).perKeyRapidTrigger, "full");
+  assert.equal(wootingCapabilities(0x1322, "2.10.0-alpha.0").perKeyRapidTrigger, "full");
+  assert.equal(wootingCapabilities(0x1322, "2.5.3").perKeyRapidTrigger, "partial");
+  assert.equal(wootingCapabilities(0x1322, "2.5.2").perKeyRapidTrigger, "none");
+  assert.equal(wootingCapabilities(0x1300, "2.13.0").perKeyRapidTrigger, "none");
+  assert.equal(wootingCapabilities(0x1300, "2.13.0").transport, "standard");
+  assert.equal(wootingCapabilities(0x1210, "2.13.0").perKeyRapidTrigger, "none");
+  assert.equal(wootingCapabilities(0x1100, "2.13.0").perKeyRapidTrigger, "none");
+});
+
+test("firmware version comparison follows semver prerelease precedence", () => {
+  assert.equal(compareWootingVersions("2.13.0", "2.13.0-beta.7"), 1);
+  assert.equal(compareWootingVersions("2.13.0-beta.7", "2.13.0-beta.7"), 0);
+  assert.equal(compareWootingVersions("2.10.0-alpha.0", "2.10.0"), -1);
+  assert.equal(compareWootingVersions("2.10.0-beta.0", "2.10.0-alpha.9"), 1);
+  assert.equal(compareWootingVersions("2.10.0-alpha.10", "2.10.0-alpha.9"), 1);
+  assert.equal(wootingVersionAtLeast(null, "2.13.0-beta.7"), true);
+  assert.equal(wootingVersionAtLeast("2.13.0-beta.6", "2.13.0-beta.7"), false);
+  assert.throws(() => compareWootingVersions("v2", "2.0.0"));
+});
+
+test("legacy KeyPropertyProfile decodes sparse and full per-key forms", () => {
+  const sparseBody = Uint8Array.from([0x12, 6, 0x08, 0xa0, 0x04, 0x08, 0xad, 0x03]);
+  const sparseReply = new Uint8Array([0xd1, 0xda, 0x36, 0x88, sparseBody.length, 0, ...sparseBody]);
+  const sparse = decodeWootingKeyPropertyProfile(sparseReply)!;
+  assert.equal(sparse.form, "partial");
+  assert.deepEqual(sparse.entries, [{ key: 0x20, value: 2 }, { key: 0xad, value: 1 }]);
+  assert.deepEqual(decodeWootingPartialRapidTriggerProfile(sparseReply)?.groups, [
+    { keys: [0x20], enabled: true, config: null },
+    { keys: [0xad], enabled: false, config: null },
+  ]);
+  const standardReply = new Uint8Array([0xd0, 0xda, 0x36, 0x88, sparseBody.length, ...sparseBody]);
+  assert.deepEqual(
+    decodeWootingKeyPropertyProfile(standardReply, { multiReport: false })?.entries,
+    sparse.entries,
+  );
+
+  const rowBody = Uint8Array.from([0x0a, 8, 0x0a, 6, 0x0a, 4, 0, 2, 0, 1]);
+  const full = decodeWootingKeyPropertyProfileBody(rowBody);
+  assert.equal(full.form, "full");
+  assert.equal(full.rows, 1);
+  assert.equal(full.columns, 4);
+  assert.deepEqual(full.entries, [
+    { key: 0, value: 0 }, { key: 1, value: 2 }, { key: 2, value: 0 }, { key: 3, value: 1 },
+  ]);
+  assert.deepEqual(wootingKeyPropertyGroups(full), [
+    { keys: [1], enabled: true, config: null },
+    { keys: [3], enabled: false, config: null },
+  ]);
+});
+
+test("legacy KeyPropertyProfile encodes and patches both forms", () => {
+  const sparse = encodeWootingKeyPropertyProfile({
+    form: "partial",
+    entries: [{ key: 0x20, value: 2 }, { key: 0xad, value: 1 }],
+  });
+  assert.deepEqual([...sparse], [0x12, 6, 0x08, 0xa0, 0x04, 0x08, 0xad, 0x03]);
+  const sparseProfile = decodeWootingKeyPropertyProfileBody(sparse);
+  assert.deepEqual([...patchWootingKeyPropertyProfile(sparseProfile, [0x20, 0xad], 0)], []);
+  const disabled = decodeWootingKeyPropertyProfileBody(patchWootingKeyPropertyProfile(sparseProfile, 0x20, 1));
+  assert.deepEqual(wootingKeyPropertyGroups(disabled), [{ keys: [0x20, 0xad], enabled: false, config: null }]);
+
+  const full = encodeWootingKeyPropertyProfile({
+    form: "full", rows: 1, columns: 4,
+    entries: [{ key: 0, value: 0 }, { key: 1, value: 2 }, { key: 2, value: 0 }, { key: 3, value: 1 }],
+  });
+  assert.deepEqual([...full], [0x0a, 8, 0x0a, 6, 0x0a, 4, 0, 2, 0, 1]);
+
+  const packet = encodeWootingKeyPropertyProfileReport(sparse, { save: true, profileIndex: 0 });
+  assert.equal(packet.reportId, 1);
+  assert.deepEqual([...packet.data.subarray(0, 8)], [0xd1, 0xda, 0x19, 1, 8, 0, 0x12, 6]);
+  const standard = encodeWootingKeyPropertyProfileReport(sparse, {
+    save: true, profileIndex: 0, multiReport: false,
+  });
+  assert.equal(standard.reportId, 0);
+  assert.deepEqual([...standard.data], [0xd0, 0xda, 0x19, 1, sparse.length, ...sparse]);
+});
+
+test("global settings output frames the captured dim and debounce changes", () => {
+  const dimTen = encodeWootingGlobalSettingsReport(0, new Uint8Array([
+    0x0a, 0x04, 0x08, 10, 0x10, 10, 0x10, 0,
+  ]));
+  assert.equal(dimTen.reportId, 1);
+  assert.deepEqual([...dimTen.data.subarray(0, 14)], [
+    0xd1, 0xda, 0x17, 0, 8, 0, 0x0a, 4, 0x08, 10, 0x10, 10, 0x10, 0,
+  ]);
+  const debounceOn = encodeWootingGlobalSettingsReport(0, [
+    0x0a, 0x04, 0x08, 5, 0x10, 10, 0x10, 0, 0x18, 1,
+  ]);
+  assert.deepEqual([...debounceOn.data.subarray(0, 16)], [
+    0xd1, 0xda, 0x17, 0, 10, 0, 0x0a, 4, 0x08, 5, 0x10, 10, 0x10, 0, 0x18, 1,
+  ]);
+});
+
+test("RGB core output frames the captured Wave effect save", () => {
+  const payload = new Uint8Array(41);
+  payload.set([0x0a, 0x13, 0x08, 0xff, 0x01, 0x10, 0xff, 0xff, 0x03]);
+  const write = encodeWootingRgbProfileCoreReport(0, payload);
+  assert.equal(write.reportId, 2);
+  assert.equal(write.data.length, 62);
+  assert.deepEqual([...write.data.subarray(0, 15)], [
+    0xd1, 0xda, 0x16, 0, 41, 0, 0x0a, 0x13, 0x08, 0xff, 0x01, 0x10, 0xff, 0xff, 0x03,
+  ]);
+  assert.throws(() => encodeWootingRgbProfileCoreReport(0, new Uint8Array(57)));
+});
+
+test("RGB core decodes and re-encodes the captured Wave and Static messages", () => {
+  const body = Uint8Array.from([
+    0x0a, 0x13, 0x08, 0xff, 0x01, 0x10, 0xff, 0xff, 0x03, 0x18, 0xff, 0xff, 0x03,
+    0x20, 0xff, 0xff, 0x03, 0x28, 0xff, 0xff, 0x03,
+    0x22, 0x12, 0x0a, 0x08, 0x0a, 0x06, 0x08, 0x00, 0x10, 0x10, 0x18, 0x00,
+    0x0a, 0x06, 0x4a, 0x04, 0x08, 0x7f, 0x10, 0x00,
+  ]);
+  const reply = new Uint8Array([0xd1, 0xda, 0x32, 0x88, body.length, 0, ...body]);
+  const core = decodeWootingRgbCore(reply)!;
+  assert.deepEqual(core.base, {
+    brightness: 255,
+    capsLockActiveColor: 65535,
+    fnLockActiveColor: 65535,
+    scrollLockActiveColor: 65535,
+    numLockActiveColor: 65535,
+  });
+  assert.deepEqual(core.layers, [
+    { kind: "wave", color: 0, speed: 16, direction: 0 },
+    { kind: "analogBomb", baseBrightness: 127, useAnalogCurve: false },
+  ]);
+  assert.equal(core.legacy, null);
+  assert.deepEqual([...encodeWootingRgbCore({ base: core.base, layers: core.layers })], [...body]);
+
+  const staticBody = Uint8Array.from([
+    ...body.subarray(0, 21),
+    0x22, 0x08, 0x0a, 0x06, 0x4a, 0x04, 0x08, 0x7f, 0x10, 0x00,
+  ]);
+  const staticCore = decodeWootingRgbCore(
+    new Uint8Array([0xd1, 0xda, 0x32, 0x88, staticBody.length, 0, ...staticBody]),
+  )!;
+  assert.deepEqual(staticCore.layers, [{ kind: "analogBomb", baseBrightness: 127, useAnalogCurve: false }]);
+  assert.deepEqual([...createWootingRgbStaticCore()], [...staticBody]);
+});
+
+test("RGB colors are RGB565 and color pages round-trip", () => {
+  assert.deepEqual(wootingRgb565ToColor(0xffff), { red: 255, green: 255, blue: 255 });
+  assert.deepEqual(wootingRgb565ToColor(0x001f), { red: 0, green: 0, blue: 255 });
+  assert.equal(wootingColorToRgb565({ red: 255, green: 255, blue: 255 }), 0xffff);
+
+  const body = encodeWootingRgbColors([[0xffff, 0x001f], [0x07e0]]);
+  const reply = new Uint8Array([0xd1, 0xda, 0x23, 0x88, body.length, 0, ...body]);
+  const colors = decodeWootingRgbColors(reply)!;
+  assert.equal(colors.part, 1);
+  assert.deepEqual(colors.rows, [[0xffff, 0x001f], [0x07e0]]);
+
+  const report = encodeWootingRgbColorsReport(1, [[0xffff]], { save: true, profileIndex: 0 });
+  assert.equal(report.reportId, 1);
+  assert.deepEqual([...report.data.subarray(0, 7)], [0xd1, 0xda, 0x0e, 1, 7, 0, 0x0a]);
+});
+
+test("RGB effect layer limits follow the model descriptors", () => {
+  assert.equal(wootingRgbLayerLimit(0x1100), 1);
+  assert.equal(wootingRgbLayerLimit(0x1300), 2);
+  assert.equal(wootingRgbLayerLimit(0x1320), 4);
+  assert.equal(wootingRgbLayerLimit(0x1500), 0);
+  assert.equal(wootingRgbLayerLimit(0x1510), 3);
+});
+
+test("AKC output selects the captured report size for Toggle Key round trip", () => {
+  const original = Uint8Array.from([
+    0x0a, 0x0c, 0x2a, 0x06, 0x08, 0x63, 0x10, 0x04, 0x18, 0x00,
+    0x40, 0x61, 0x48, 0x00, 0x10, 0x00, 0x18, 0x01,
+  ]);
+  const saved = encodeWootingAkcProfileReport(0, original);
+  assert.equal(saved.reportId, 1);
+  assert.deepEqual([...saved.data.subarray(0, 24)], [0xd1, 0xda, 0x18, 0, 18, 0, ...original]);
+  const withToggle = Uint8Array.from([
+    ...original.subarray(0, 14), 0x0a, 0x09, 0x1a, 0x02, 0x08, 0x77,
+    0x40, 0xab, 0x01, 0x48, 0x00, 0x10, 0x00, 0x18, 0x02,
+  ]);
+  const added = encodeWootingAkcProfileReport(0, withToggle);
+  assert.equal(added.reportId, 2);
+  assert.deepEqual([...added.data.subarray(0, 35)], [0xd1, 0xda, 0x18, 0, 29, 0, ...withToggle]);
+  assert.throws(() => encodeWootingAkcProfileReport(0, new Uint8Array(57)));
+  const toggleItem = encodeWootingAkcItem({
+    keyIndex: 0xab, layer: 0, kind: "toggleKey", payload: encodeWootingAkcPayload({ kind: "toggleKey", keybind: 0x77 }),
+  });
+  assert.deepEqual([...toggleItem], [0x1a, 2, 0x08, 0x77, 0x40, 0xab, 1, 0x48, 0]);
+  const patched = patchWootingAkcProfile(original, 0xab, 0, toggleItem);
+  assert.deepEqual([...patched], [...withToggle]);
+  assert.deepEqual([...patchWootingAkcProfile(patched, 0xab, 0, null)], [...original]);
+  assert.deepEqual([...encodeWootingAkcPayload({
+    kind: "socd", secondaryKey: 0x63, socdMode: 4, inputBothOnBottomOut: false,
+  })], [0x08, 0x63, 0x10, 4, 0x18, 0]);
+  assert.deepEqual([...encodeWootingAkcPayload({
+    kind: "dks", keys: Uint8Array.from([1, 2]), bitmappedActions: Uint8Array.from([3]),
+  })], [0x0a, 2, 1, 2, 0x12, 1, 3]);
+  assert.throws(() => encodeWootingAkcPayload({ kind: "modTap", tapKey: -1, holdKey: 1 }));
+});
+
+test("AKC chunk encoding splits at ten items and carries totals", () => {
+  const items = Array.from({ length: 12 }, (_, index) => Uint8Array.from([
+    0x1a, 2, 0x08, index, 0x40, 0x20 + index, 0x48, 0,
+  ]));
+  const complete = encodeWootingAkcProfileFromItems(items);
+  const chunks = encodeWootingAkcChunks(complete);
+  assert.equal(chunks.length, 2);
+  assert.deepEqual(chunks.map((chunk) => [chunk.startPoint, chunk.totalItems]), [[0, 12], [10, 12]]);
+  assert.equal(decodeProtobufFields(chunks[0]!.message).filter((field) => field.field === 1).length, 10);
+  assert.equal(decodeProtobufFields(chunks[1]!.message).filter((field) => field.field === 1).length, 2);
+  const packet = encodeWootingAkcChunkReport(chunks[1]!, { save: true, profileIndex: 0 });
+  assert.equal(packet.data[3]! & 1, 1);
+  assert.equal(packet.data[2], 0x18);
+});
+
+test("typed DKS packs four bindings and four 2-bit transitions per point", () => {
+  const actions = [
+    { keybind: 1, transitions: [1, 0, 0, 0] },
+    { keybind: 2, transitions: [0, 1, 0, 0] },
+    { keybind: 3, transitions: [0, 0, 1, 0] },
+    { keybind: 4, transitions: [0, 0, 0, 1] },
+  ] as const;
+  assert.deepEqual([...encodeWootingDksPayload(actions, 17203)], [
+    0x0a, 4, 1, 2, 3, 4,
+    0x12, 4, 0x01, 0x04, 0x10, 0x40,
+    0x18, 0xb3, 0x86, 0x01,
+  ]);
+  assert.equal(wootingSocdModeLabel(0), "Both");
+  assert.equal(wootingSocdModeLabel(3), "Secondary Priority");
+  assert.equal(wootingSocdModeLabel(4), "Last Input Priority");
+  assert.equal(wootingJitActivationLabel(0), "Hold Modifiers");
+  assert.equal(wootingJitActivationLabel(3), "Tap Always");
+});
+
+test("global settings patch preserves unknown fields and nested timeouts", () => {
+  const before = Uint8Array.from([0x0a, 4, 0x08, 5, 0x10, 10, 0x28, 0x7b]);
+  const after = patchWootingGlobalSettings(before, { rgbDimMinutes: 8, debounceFilter: true });
+  assert.deepEqual([...after], [0x28, 0x7b, 0x0a, 4, 0x10, 10, 0x08, 8, 0x18, 1]);
+  assert.deepEqual([...before], [0x0a, 4, 0x08, 5, 0x10, 10, 0x28, 0x7b]);
+  assert.throws(() => patchWootingGlobalSettings(before, { rgbOffMinutes: -1 }));
+  assert.throws(() => patchWootingGlobalSettings(Uint8Array.from([0x0a, 10, 0x08]), { debounceFilter: true }));
 });

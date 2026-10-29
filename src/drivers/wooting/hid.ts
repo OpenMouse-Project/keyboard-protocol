@@ -9,23 +9,36 @@ import type {
 } from "../keyboard-types.ts";
 import {
   decodeWootingAkcProfile,
+  decodeWootingActuationProfile,
   decodeWootingAnalogProfilesCount,
   decodeWootingAnalogReport,
   decodeWootingAnalogSnapshot,
   decodeWootingDeviceConfig,
+  decodeWootingDksProfile,
   decodeWootingFlashChipConnected,
   decodeWootingFlashStats,
+  decodeWootingFullRapidTriggerProfile,
   decodeWootingFunctionMappingProfile,
   decodeWootingGamepadProfile,
   decodeWootingGlobalSettings,
+  decodeWootingKeyPropertyProfile,
+  decodeWootingKeyPropertyProfileBody,
   decodeWootingKeyboardProfile,
+  decodeWootingPartialRapidTriggerProfile,
+  decodeWootingRapidTriggerProfileBody,
   decodeWootingMainMappingProfile,
   decodeWootingMappingProfile,
   decodeWootingNumberOfKeys,
   decodeWootingProfileIndex,
   decodeWootingProfileMetadata,
+  decodeWootingRapidTriggerProfile,
+  decodeWootingReplyBody,
+  decodeWootingRgbColors,
+  decodeWootingRgbCore,
   decodeWootingRgbProfileColors,
   decodeWootingRgbProfileCore,
+  encodeWootingRgbColorsReport,
+  encodeWootingRgbCore,
   decodeWootingRgbProfileCount,
   decodeWootingRgbLayer,
   decodeWootingVersion,
@@ -35,9 +48,30 @@ import {
   encodeWootingRgbBuffer,
   encodeWootingSaveCommand,
   encodeWootingSingleColor,
+  encodeWootingGlobalSettingsReport,
+  encodeWootingAkcProfileReport,
+  encodeWootingAkcChunkReport,
+  encodeWootingAkcChunks,
+  encodeWootingAkcProfileFromItems,
+  encodeWootingAkcItem,
+  encodeWootingAkcPayload,
+  patchWootingAkcProfile,
+  encodeWootingRgbProfileCoreReport,
+  encodeWootingKeyboardBaseReport,
+  encodeWootingActuationProfileReport,
+  encodeWootingKeyPropertyProfileReport,
+  encodeWootingRapidTriggerProfileReport,
+  patchWootingKeyPropertyProfile,
+  patchWootingKeyboardBase,
+  patchWootingActuationProfile,
+  patchWootingGlobalSettings,
+  patchWootingRapidTriggerProfile,
   isWootingReply,
   wootingActuationMm,
+  wootingCapabilities,
   wootingFeatureReport,
+  wootingKeyPropertyGroups,
+  wootingProduct,
   wootingProductName,
   wootingReplyOk,
   WOOTING_PROFILE_SWITCH_SETTLE_MS,
@@ -47,15 +81,24 @@ import {
   WOOTING_CONFIG_USAGE,
   WOOTING_CONFIG_USAGE_PAGE,
   WOOTING_CONFIG_USAGE_PAGE_STANDARD,
-  WOOTING_PRODUCTS,
   WOOTING_STATUS_ERROR,
   WOOTING_VENDOR_ID,
   type WootingActuationProfile,
   type WootingAkcProfile,
+  type WootingAkcPayloadWrite,
   type WootingAnalogKey,
   type WootingDksProfile,
+  type WootingCapabilities,
+  type WootingFullRapidTriggerProfile,
+  type WootingKeyPropertyValue,
+  type WootingRapidTriggerGroup,
   type WootingRapidTriggerProfile,
+  type WootingRapidTriggerTarget,
+  type WootingRgbColors,
+  type WootingRgbCore,
+  type WootingRgbCoreWrite,
   WOOTING_MAGIC_MULTI,
+  WOOTING_MAGIC_SINGLE,
   WOOTING_MAGIC_WORD_1,
 } from "@openmouse/keyboard-protocol/wooting";
 
@@ -154,8 +197,13 @@ export class WootingHidClient {
    */
   static isSupported(device: HIDDevice): boolean {
     if (device.vendorId !== WOOTING_VENDOR_ID) return false;
-    if (!WOOTING_PRODUCTS[device.productId]) return false;
+    if (!wootingProduct(device.productId)) return false;
     return WootingHidClient.configCollection(device.collections) !== null;
+  }
+
+  /** The collection, rather than the PID, determines Standard versus ARM framing. */
+  private multiReport(): boolean {
+    return WootingHidClient.configCollection(this.device.collections)?.usagePage === WOOTING_CONFIG_USAGE_PAGE;
   }
 
   /** The command-capable config collection, if this device exposes one. */
@@ -180,6 +228,15 @@ export class WootingHidClient {
       this.device.addEventListener("inputreport", this.onInputReport);
       this.listening = true;
     }
+  }
+
+  /**
+   * Model/firmware gates from Wootility 5.4.2. Reads `get_version` once per
+   * connection (cached), then applies the ARM/Flaretech and firmware gates.
+   */
+  async capabilities(): Promise<WootingCapabilities> {
+    const reply = await this.command(WOOTING_COMMAND.getVersion).catch(() => null);
+    return wootingCapabilities(this.device.productId, reply ? decodeWootingVersion(reply) : null);
   }
 
   async close(): Promise<void> {
@@ -272,6 +329,7 @@ export class WootingHidClient {
       analogProfile: profile.analogProfile,
       perKeyActuation: profile.perKeyActuation,
       rapidTrigger: profile.rapidTrigger,
+      perKeyRapidTrigger: profile.perKeyRapidTrigger,
       mappings: profile.mappings,
       dks: profile.dks,
       akc: profile.akc,
@@ -279,6 +337,7 @@ export class WootingHidClient {
       rgb: profile.rgb,
       diagnostics: profile.diagnostics,
       analogSnapshot: profile.analogSnapshot,
+      capabilities: profile.capabilities,
     };
   }
 
@@ -299,6 +358,7 @@ export class WootingHidClient {
     analogProfile: WootingAnalogProfileFull | null;
     perKeyActuation: WootingActuationProfile | null;
     rapidTrigger: WootingRapidTriggerProfile | null;
+    perKeyRapidTrigger: WootingFullRapidTriggerProfile | null;
     mappings: WootingMappings | null;
     dks: WootingDksProfile | null;
     akc: WootingAkcProfile | null;
@@ -306,7 +366,9 @@ export class WootingHidClient {
     rgb: WootingRgb | null;
     diagnostics: WootingDiagnostics | null;
     analogSnapshot: WootingAnalogSnapshot | null;
+    capabilities: WootingCapabilities;
   }> {
+    const capabilities = await this.capabilities();
     const indexReply = await this.command(WOOTING_COMMAND.getCurrentKeyboardProfileIndex);
     const active = indexReply ? decodeWootingProfileIndex(indexReply)?.active ?? null : null;
     // GetDigitalProfilesCount answers 0x66 on ARM — probe per-slot metadata
@@ -335,8 +397,11 @@ export class WootingHidClient {
     // unreadable) and stay best-effort: every helper catches its own failure,
     // so identity (firmware/layout/profiles) always survives a silent extra.
     const target = active ?? 0;
-    const [analogProfile, mappings, dks, akc, gamepad, rgb, diagnostics, analogSnapshot] = await Promise.all([
+    const [analogProfile, perKeyActuation, rapidTrigger, perKeyRapidTrigger, mappings, dks, akc, gamepad, rgb, diagnostics, analogSnapshot] = await Promise.all([
       this.readAnalogProfileFull(target).catch(() => null),
+      this.readPerKeyActuation(target).catch(() => null),
+      this.readRapidTrigger(target).catch(() => null),
+      this.readPerKeyRapidTrigger(target).catch(() => null),
       this.readMappings(target).catch(() => null),
       this.readDks(target).catch(() => null),
       this.readAkc(target).catch(() => null),
@@ -345,7 +410,7 @@ export class WootingHidClient {
       this.readDiagnostics().catch(() => null),
       this.readAnalogSnapshot().catch(() => ({ available: false as const, keys: [] })),
     ]);
-    return { active, count, names, analogProfile, perKeyActuation: null, rapidTrigger: null, mappings, dks, akc, gamepad, rgb, diagnostics, analogSnapshot };
+    return { active, count, names, analogProfile, perKeyActuation, rapidTrigger, perKeyRapidTrigger, mappings, dks, akc, gamepad, rgb, diagnostics, analogSnapshot, capabilities };
   }
 
   /** Profile names for slots `0..slotCount`, null where the board stays silent. */
@@ -387,7 +452,7 @@ export class WootingHidClient {
     const keyboard = target === null ? null : await this.sendProfileCommand(WOOTING_COMMAND.getKeyboardProfile, target).catch(() => null);
     const globalReply = await this.command(WOOTING_COMMAND.getSettings);
     if (!keyboard && !globalReply) return null;
-    const decoded = keyboard ? decodeWootingKeyboardProfile(keyboard) : null;
+    const decoded = keyboard ? decodeWootingKeyboardProfile(keyboard, { multiReport: this.multiReport() }) : null;
     const actuationRaw = decoded?.actuationRaw ?? null;
     return {
       actuationRaw,
@@ -397,23 +462,54 @@ export class WootingHidClient {
     };
   }
 
-  /**
-   * Per-key actuation overrides (0x31). Every ARM board answers an empty OK
-   * body (confirmed live), so this stays null on ARM — Standard firmware only.
-   */
-  async readPerKeyActuation(_slot?: number): Promise<WootingActuationProfile | null> {
+  /** Per-key actuation overrides (0x31); an empty body means no overrides. */
+  async readPerKeyActuation(slot?: number): Promise<WootingActuationProfile | null> {
     await this.open();
-    return null;
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const reply = await this.sendProfileCommand(WOOTING_COMMAND.getActuationProfile, target).catch(() => null);
+    return reply ? decodeWootingActuationProfile(reply) : null;
   }
 
   /**
-   * Rapid-trigger profile (0x36). Every ARM board answers an empty OK body
-   * (confirmed live) — rapid-trigger state lives in the 0x27 keyboard
-   * profile on ARM. Standard firmware only.
+   * Legacy rapid-trigger profile (0x36, Wootility's `KeyPropertyProfile`). ARM
+   * boards answer empty even when per-key rapid trigger is configured; use
+   * {@link readPerKeyRapidTrigger} (0x3D) there. Kept for Standard firmware.
    */
-  async readRapidTrigger(_slot?: number): Promise<WootingRapidTriggerProfile | null> {
+  async readRapidTrigger(slot?: number): Promise<WootingRapidTriggerProfile | null> {
     await this.open();
-    return null;
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const reply = await this.sendProfileCommand(WOOTING_COMMAND.getRapidTriggerProfile, target).catch(() => null);
+    return reply && (reply[4] || reply[5]) ? decodeWootingRapidTriggerProfile(reply) : null;
+  }
+
+  /**
+   * ARM per-key rapid-trigger groups (0x3D, Wootility's
+   * `getFullRapidTriggerProfile`). An OK reply with an empty body decodes to
+   * `{ groups: [], raw: empty }` — the board has no per-key overrides. Onboard
+   * slots only; linked-profile selectors are not exposed yet.
+   */
+  async readPerKeyRapidTrigger(slot?: number): Promise<WootingFullRapidTriggerProfile | null> {
+    await this.open();
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const capabilities = await this.capabilities();
+    if (capabilities.perKeyRapidTrigger === "full") {
+      const reply = await this.sendProfileCommand(WOOTING_COMMAND.getFullRapidTriggerProfile, target).catch(() => null);
+      return reply ? decodeWootingFullRapidTriggerProfile(reply) : null;
+    }
+    if (capabilities.perKeyRapidTrigger === "partial") {
+      const reply = await this.sendProfileCommand(WOOTING_COMMAND.getRapidTriggerProfile, target).catch(() => null);
+      return reply ? decodeWootingPartialRapidTriggerProfile(reply, { multiReport: this.multiReport() }) : null;
+    }
+    // Unknown/older model: probe the ARM commands without inventing a mode.
+    if (!this.multiReport()) return null;
+    const fullReply = await this.sendProfileCommand(WOOTING_COMMAND.getFullRapidTriggerProfile, target).catch(() => null);
+    const full = fullReply ? decodeWootingFullRapidTriggerProfile(fullReply) : null;
+    if (full) return full;
+    const partialReply = await this.sendProfileCommand(WOOTING_COMMAND.getRapidTriggerProfile, target).catch(() => null);
+    return partialReply ? decodeWootingPartialRapidTriggerProfile(partialReply, { multiReport: true }) : null;
   }
 
   /** Key mappings for one slot: generic blob (0x30) plus Fn layers (0x11/0x12). */
@@ -433,23 +529,41 @@ export class WootingHidClient {
     };
   }
 
-  /**
-   * Dynamic-keystroke profile (0x18). Every ARM board answers an empty OK
-   * body (confirmed live), so this reports null = unbound on ARM — Standard
-   * firmware only.
-   */
-  async readDks(_slot?: number): Promise<WootingDksProfile | null> {
+  /** Dynamic-keystroke profile (0x18); zero-length means unbound. */
+  async readDks(slot?: number): Promise<WootingDksProfile | null> {
     await this.open();
-    return null;
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const reply = await this.sendProfileCommand(WOOTING_COMMAND.getDksProfile, target).catch(() => null);
+    return reply && (reply[4] || reply[5]) ? decodeWootingDksProfile(reply) : null;
   }
 
-  /** Advanced-keys-combo profile for one slot (0x34). Null when silent. */
+  /**
+   * Advanced-keys-combo profile for one slot (0x34). Multi-part replies are
+   * followed with `startPoint = items.length` until `totalItems` is reached.
+   */
   async readAkc(slot?: number): Promise<WootingAkcProfile | null> {
     await this.open();
     const target = slot ?? await this.activeSlotOrDefault();
     if (target === null) return null;
     const reply = await this.sendProfileCommand(WOOTING_COMMAND.getAkcProfile, target).catch(() => null);
-    return reply ? decodeWootingAkcProfile(reply) : null;
+    const first = reply ? decodeWootingAkcProfile(reply) : null;
+    if (!first || first.totalItems <= first.combos.length) return first;
+    const combos = [...first.combos];
+    while (combos.length < first.totalItems) {
+      const chunkReply = await this.readAkcChunk(target, combos.length).catch(() => null);
+      const chunk = chunkReply ? decodeWootingAkcProfile(chunkReply) : null;
+      if (!chunk?.combos.length) break;
+      combos.push(...chunk.combos);
+    }
+    return { ...first, combos };
+  }
+
+  private async readAkcChunk(slot: number, startPoint: number): Promise<Uint8Array | null> {
+    const buffer = encodeWootingCommand(WOOTING_COMMAND.getAkcProfile, 0, startPoint, 0, slot & 0xff, { multiReport: true });
+    const run = this.commandLock.then(() => this.probeRawCommand(buffer));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    return run.catch(() => null);
   }
 
   /**
@@ -543,7 +657,8 @@ export class WootingHidClient {
     // 20480) and rapid-trigger fields. Read it over the working channel
     // (feature, magic 0xD1, current-profile selector 0xFFFF).
     const command = new Uint8Array([
-      WOOTING_MAGIC_MULTI, WOOTING_MAGIC_WORD_1, WOOTING_COMMAND.getKeyboardProfile, 0xff, 0xff, 0x00, 0x00,
+      this.multiReport() ? WOOTING_MAGIC_MULTI : WOOTING_MAGIC_SINGLE,
+      WOOTING_MAGIC_WORD_1, WOOTING_COMMAND.getKeyboardProfile, 0xff, 0xff, 0x00, 0x00,
     ]);
     const reports = await this.collectCommand(command, false).catch(() => []);
     const note = reports.some((report) => report.subarray(4).some((byte) => byte !== 0))
@@ -569,7 +684,7 @@ export class WootingHidClient {
    */
   async switchProfile(slot: number): Promise<number> {
     await this.open();
-    const [init, activate, reload] = encodeWootingProfileSwitch(slot);
+    const [init, activate, reload] = encodeWootingProfileSwitch(slot, { multiReport: this.multiReport() });
     const initReply = await this.sendRawWrite(init);
     if (!initReply || !wootingReplyOk(initReply)) throw new Error(`WootDevInit was not accepted (slot ${slot}).`);
     const activateReply = await this.sendRawWrite(activate);
@@ -594,11 +709,395 @@ export class WootingHidClient {
    */
   async saveProfile(commandId: number, slot: number, confirmed: boolean): Promise<boolean> {
     await this.open();
-    const buffer = encodeWootingSaveCommand(commandId, slot, { confirmed });
+    const buffer = encodeWootingSaveCommand(commandId, slot, { confirmed, multiReport: this.multiReport() });
     const reply = await this.sendRawWrite(buffer);
     if (!reply || !wootingReplyOk(reply)) throw new Error(`Save command 0x${commandId.toString(16)} was not accepted (slot ${slot}).`);
     this.replies.clear();
     return true;
+  }
+
+  /** Persist the active profile's base actuation and rapid-trigger defaults. */
+  async writeAnalogDefaults(
+    changes: { actuationMm?: number; rapidTriggerEnabled?: boolean; rapidTriggerSensitivityMm?: number },
+    confirmed: boolean,
+  ): Promise<boolean> {
+    if (!confirmed) throw new Error("Saving Wooting analog settings requires confirmation.");
+    if (!Object.keys(changes).length) throw new Error("No Wooting analog settings were supplied.");
+    await this.open();
+    if (!this.multiReport()) {
+      throw new Error("Standard/AVR base profile writes use the fixed-128/CRC command space and are not implemented yet.");
+    }
+    const slot = await this.activeSlotOrDefault();
+    if (slot === null) throw new Error("Could not identify the active Wooting profile.");
+    const multiReport = this.multiReport();
+    const original = await this.sendProfileCommand(WOOTING_COMMAND.getKeyboardProfile, slot);
+    const body = original ? decodeWootingReplyBody(original, WOOTING_COMMAND.getKeyboardProfile, { multiReport }) : null;
+    if (!body?.length) throw new Error("Could not read a complete Wooting keyboard profile before saving.");
+    const edited = patchWootingKeyboardBase(body, changes);
+    const packet = encodeWootingKeyboardBaseReport(edited, { multiReport, save: true, profileIndex: slot });
+    const run = this.commandLock.then(() => this.sendOutput(packet));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    await run;
+    this.replies.clear();
+    const reply = await this.sendProfileCommand(WOOTING_COMMAND.getKeyboardProfile, slot);
+    const actual = reply ? decodeWootingKeyboardProfile(reply, { multiReport }) : null;
+    const header = multiReport
+      ? [0xd1, 0xda, WOOTING_COMMAND.getKeyboardProfile, 0x88, edited.length & 0xff, edited.length >>> 8]
+      : [0xd0, 0xda, WOOTING_COMMAND.getKeyboardProfile, 0x88, edited.length];
+    const expected = decodeWootingKeyboardProfile(new Uint8Array([...header, ...edited]), { multiReport });
+    if (!actual || !expected
+      || (changes.actuationMm !== undefined && actual.actuationRaw !== expected.actuationRaw)
+      || (changes.rapidTriggerEnabled !== undefined && actual.rapidTriggerEnabled !== expected.rapidTriggerEnabled)
+      || (changes.rapidTriggerSensitivityMm !== undefined && actual.releaseSensitivityRaw !== expected.releaseSensitivityRaw)) {
+      throw new Error("Wooting analog settings save was not confirmed by read-back.");
+    }
+    this.replies.clear();
+    return true;
+  }
+
+  async writeActuationDefault(actuationMm: number, confirmed: boolean): Promise<boolean> {
+    return this.writeAnalogDefaults({ actuationMm }, confirmed);
+  }
+
+  async writeRapidTriggerDefault(enabled: boolean, sensitivityMm: number, confirmed: boolean): Promise<boolean> {
+    return this.writeAnalogDefaults({ rapidTriggerEnabled: enabled, rapidTriggerSensitivityMm: sensitivityMm }, confirmed);
+  }
+
+  /** Read, edit, save, and verify one actuation override without replacing other keys. */
+  async editPerKeyActuation(key: number, actuationMm: number | null, confirmed: boolean): Promise<boolean> {
+    if (!confirmed) throw new Error("Saving Wooting per-key actuation requires confirmation.");
+    await this.open();
+    if (!this.multiReport()) throw new Error("Per-key actuation output is only captured for ARM Wooting devices.");
+    const slot = await this.activeSlotOrDefault();
+    if (slot === null) throw new Error("Could not identify the active Wooting profile.");
+    this.replies.clear();
+    const originalReply = await this.sendProfileCommand(WOOTING_COMMAND.getActuationProfile, slot);
+    const original = originalReply ? decodeWootingActuationProfile(originalReply, { multiReport: true }) : null;
+    if (!original) throw new Error("Could not read the complete per-key actuation profile before editing.");
+    const edited = patchWootingActuationProfile(original.raw, key, actuationMm);
+    const expected = decodeWootingActuationProfile(new Uint8Array([0xd1, 0xda, WOOTING_COMMAND.getActuationProfile, 0x88,
+      edited.length & 0xff, edited.length >>> 8, ...edited]), { multiReport: true });
+    if (!expected) throw new Error("Could not decode edited actuation profile.");
+    const packet = encodeWootingActuationProfileReport(edited, { multiReport: true, save: true });
+    const run = this.commandLock.then(() => this.sendOutput(packet));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    await run;
+    this.replies.clear();
+    const verifyReply = await this.sendProfileCommand(WOOTING_COMMAND.getActuationProfile, slot);
+    const verified = verifyReply ? decodeWootingActuationProfile(verifyReply, { multiReport: true }) : null;
+    const ordered = (profile: WootingActuationProfile) => profile.overrides
+      .map(({ key: matrixKey, actuationRaw }) => `${matrixKey}:${actuationRaw}`).sort();
+    if (!verified || JSON.stringify(ordered(verified)) !== JSON.stringify(ordered(expected))) {
+      throw new Error("Wooting per-key actuation save was not confirmed by read-back.");
+    }
+    this.replies.clear();
+    return true;
+  }
+
+  /**
+   * Read, edit, save, and verify per-key rapid trigger. ARM firmware >=2.10
+   * uses full groups (0x3D/0x1D) with per-key sensitivity; older ARM firmware
+   * uses the legacy KeyPropertyProfile (0x36/0x19), which only supports
+   * enabled/disabled per key. `target` null removes the override; a config
+   * target is rejected on the legacy path. The profile's base rapid-trigger
+   * switch is left untouched: a live 60HE+ stores groups with that switch on,
+   * and changing it is a separate base-profile write.
+   */
+  async editPerKeyRapidTrigger(
+    keys: number | readonly number[],
+    target: WootingRapidTriggerTarget | null,
+    confirmed: boolean,
+  ): Promise<boolean> {
+    if (!confirmed) throw new Error("Saving Wooting per-key rapid trigger requires confirmation.");
+    await this.open();
+    const slot = await this.activeSlotOrDefault();
+    if (slot === null) throw new Error("Could not identify the active Wooting profile.");
+    const capabilities = await this.capabilities();
+    this.replies.clear();
+    if (capabilities.perKeyRapidTrigger === "full") return this.editFullPerKeyRapidTrigger(slot, keys, target);
+    if (capabilities.perKeyRapidTrigger === "partial") return this.editPartialPerKeyRapidTrigger(slot, keys, target);
+    if (!this.multiReport()) throw new Error("Per-key rapid trigger is not supported on this Wooting transport.");
+    const probe = await this.readPerKeyRapidTrigger(slot);
+    if (!probe) throw new Error("Could not determine the Wooting per-key rapid-trigger mode.");
+    this.replies.clear();
+    return probe.mode === "full"
+      ? this.editFullPerKeyRapidTrigger(slot, keys, target)
+      : this.editPartialPerKeyRapidTrigger(slot, keys, target);
+  }
+
+  private async editFullPerKeyRapidTrigger(
+    slot: number,
+    keys: number | readonly number[],
+    target: WootingRapidTriggerTarget | null,
+  ): Promise<boolean> {
+    const originalReply = await this.sendProfileCommand(WOOTING_COMMAND.getFullRapidTriggerProfile, slot);
+    const original = originalReply ? decodeWootingFullRapidTriggerProfile(originalReply) : null;
+    if (!original) throw new Error("Could not read the complete per-key rapid-trigger profile before editing.");
+    const edited = patchWootingRapidTriggerProfile(original.raw, keys, target);
+    const expected = decodeWootingRapidTriggerProfileBody(edited);
+    const packet = encodeWootingRapidTriggerProfileReport(edited, {
+      multiReport: true, save: true, profileIndex: slot,
+    });
+    const run = this.commandLock.then(() => this.sendOutput(packet));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    await run;
+    this.replies.clear();
+    const verifyReply = await this.sendProfileCommand(WOOTING_COMMAND.getFullRapidTriggerProfile, slot);
+    const verified = verifyReply ? decodeWootingFullRapidTriggerProfile(verifyReply) : null;
+    if (!verified || !this.perKeyRapidTriggerMatches(verified.groups, expected)) {
+      throw new Error("Wooting per-key rapid trigger save was not confirmed by read-back.");
+    }
+    this.replies.clear();
+    return true;
+  }
+
+  private async editPartialPerKeyRapidTrigger(
+    slot: number,
+    keys: number | readonly number[],
+    target: WootingRapidTriggerTarget | null,
+  ): Promise<boolean> {
+    if (target !== null && !("enabled" in target)) {
+      throw new Error("Per-key rapid-trigger sensitivity requires full per-key RT support.");
+    }
+    const value: WootingKeyPropertyValue = target === null ? 0 : target.enabled ? 2 : 1;
+    const originalReply = await this.sendProfileCommand(WOOTING_COMMAND.getRapidTriggerProfile, slot);
+    const original = originalReply
+      ? decodeWootingKeyPropertyProfile(originalReply, { multiReport: this.multiReport() })
+      : null;
+    if (!original) throw new Error("Could not read the complete per-key rapid-trigger profile before editing.");
+    const edited = patchWootingKeyPropertyProfile(original, keys, value);
+    const expected = wootingKeyPropertyGroups(decodeWootingKeyPropertyProfileBody(edited));
+    const packet = encodeWootingKeyPropertyProfileReport(edited, {
+      multiReport: this.multiReport(), save: true, profileIndex: slot,
+    });
+    const run = this.commandLock.then(() => this.sendOutput(packet));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    await run;
+    this.replies.clear();
+    const verifyReply = await this.sendProfileCommand(WOOTING_COMMAND.getRapidTriggerProfile, slot);
+    const verified = verifyReply
+      ? decodeWootingPartialRapidTriggerProfile(verifyReply, { multiReport: this.multiReport() })
+      : null;
+    if (!verified || !this.perKeyRapidTriggerMatches(verified.groups, expected)) {
+      throw new Error("Wooting per-key rapid trigger save was not confirmed by read-back.");
+    }
+    this.replies.clear();
+    return true;
+  }
+
+  /** Compare per-key settings by key, ignoring group boundaries and order. */
+  private perKeyRapidTriggerMatches(
+    actual: readonly WootingRapidTriggerGroup[],
+    expected: readonly WootingRapidTriggerGroup[],
+  ): boolean {
+    const describe = (groups: readonly WootingRapidTriggerGroup[]): string | null => {
+      const settings = new Map<number, string>();
+      for (const group of groups) {
+        const value = group.config
+          ? `config:${group.config.primarySensitivityRaw}:${group.config.secondarySensitivityRaw ?? "-"}:${group.config.continuousMode === null ? "-" : Number(group.config.continuousMode)}`
+          : `enabled:${group.enabled}`;
+        for (const key of group.keys) {
+          if (settings.has(key)) return null;
+          settings.set(key, value);
+        }
+      }
+      return [...settings.entries()].sort(([a], [b]) => a - b).map(([key, value]) => `${key}=${value}`).join(",");
+    };
+    const description = describe(actual);
+    return description !== null && description === describe(expected);
+  }
+
+  /**
+   * Write a complete, field-preserving GlobalSettings message and read it back.
+   * Wootility sends this as output report 1 / command 0x17. This confirms the
+   * device's current value; persistence across power cycles still requires the
+   * model-specific save sequence.
+   */
+  async writeGlobalSettings(changes: Parameters<typeof patchWootingGlobalSettings>[1]): Promise<boolean> {
+    await this.open();
+    if (!this.multiReport()) throw new Error("Global settings output is only captured for ARM Wooting devices.");
+    const original = await this.sendCommand(WOOTING_COMMAND.getSettings);
+    const decoded = original ? decodeWootingGlobalSettings(original) : null;
+    if (!decoded) throw new Error("Could not read complete Wooting global settings before writing.");
+    const expected = patchWootingGlobalSettings(decoded.raw, changes);
+    const packet = encodeWootingGlobalSettingsReport(0, expected);
+    const run = this.commandLock.then(() => this.device.sendReport(packet.reportId, new Uint8Array(packet.data)));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    await run;
+    this.replies.clear();
+    const verifyReply = await this.sendCommand(WOOTING_COMMAND.getSettings);
+    const verified = verifyReply ? decodeWootingGlobalSettings(verifyReply) : null;
+    if (!verified || !this.globalSettingsMatch(verified, changes)) {
+      throw new Error("Wooting global settings write was not confirmed by read-back.");
+    }
+    return true;
+  }
+
+  /** Stage a complete RGB core message and verify the board's current copy. */
+  async writeRgbProfileCore(slot: number, completeMessage: Uint8Array): Promise<boolean> {
+    await this.open();
+    if (!this.multiReport()) throw new Error("RGB core output is only captured for ARM Wooting devices.");
+    const packet = encodeWootingRgbProfileCoreReport(slot, completeMessage);
+    const run = this.commandLock.then(() => this.device.sendReport(packet.reportId, new Uint8Array(packet.data)));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    await run;
+    this.replies.clear();
+    const reply = await this.sendProfileCommand(WOOTING_COMMAND.getRgbProfileCore, slot);
+    const actual = reply ? decodeWootingRgbProfileCore(reply)?.raw : null;
+    if (!actual || actual.length !== completeMessage.length || actual.some((byte, index) => byte !== completeMessage[index])) {
+      throw new Error("Wooting RGB core write was not confirmed by read-back.");
+    }
+    this.replies.clear();
+    return true;
+  }
+
+  /** Typed RGB profile core (base brightness/lock colors + V2 effect layers). */
+  async readRgbCore(slot?: number): Promise<WootingRgbCore | null> {
+    await this.open();
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const reply = await this.sendProfileCommand(WOOTING_COMMAND.getRgbProfileCore, target).catch(() => null);
+    return reply ? decodeWootingRgbCore(reply, { multiReport: this.multiReport() }) : null;
+  }
+
+  /** Typed per-key color page (part 1 = 0x23, part 2 = 0x24). */
+  async readRgbColors(part: 1 | 2, slot?: number): Promise<WootingRgbColors | null> {
+    await this.open();
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) return null;
+    const command = part === 1 ? WOOTING_COMMAND.getRgbProfileColors1 : WOOTING_COMMAND.getRgbProfileColors2;
+    const reply = await this.sendProfileCommand(command, target).catch(() => null);
+    return reply ? decodeWootingRgbColors(reply, { multiReport: this.multiReport() }) : null;
+  }
+
+  /** Encode and stage a typed RGB core, then verify the exact read-back. */
+  async writeRgbCore(core: WootingRgbCoreWrite, slot?: number): Promise<boolean> {
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) throw new Error("Could not identify the active Wooting profile.");
+    return this.writeRgbProfileCore(target, encodeWootingRgbCore(core));
+  }
+
+  /** Stage a typed color page (0x0E/0x0F), verify read-back, require confirm. */
+  async writeRgbColors(
+    part: 1 | 2,
+    rows: readonly (readonly number[])[],
+    confirmed: boolean,
+    slot?: number,
+  ): Promise<boolean> {
+    if (!confirmed) throw new Error("Saving Wooting RGB colors requires confirmation.");
+    await this.open();
+    if (!this.multiReport()) throw new Error("RGB color output is only captured for ARM Wooting devices.");
+    const target = slot ?? await this.activeSlotOrDefault();
+    if (target === null) throw new Error("Could not identify the active Wooting profile.");
+    const packet = encodeWootingRgbColorsReport(part, rows, {
+      multiReport: true, save: true, profileIndex: target,
+    });
+    const run = this.commandLock.then(() => this.sendOutput(packet));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    await run;
+    this.replies.clear();
+    const actual = await this.readRgbColors(part, target);
+    if (!actual || JSON.stringify(actual.rows) !== JSON.stringify(rows)) {
+      throw new Error("Wooting RGB colors write was not confirmed by read-back.");
+    }
+    this.replies.clear();
+    return true;
+  }
+
+  /**
+   * Persist a complete AKC profile using the captured output 0x18 → feature
+   * save 0x35 sequence, then compare the read-back body. The caller owns the
+   * complete message and must explicitly confirm the flash overwrite.
+   */
+  async writeAkcProfile(scope: number, completeMessage: Uint8Array, confirmed: boolean): Promise<boolean> {
+    if (!confirmed) throw new Error("Saving a Wooting AKC profile requires confirmation.");
+    await this.open();
+    if (!this.multiReport()) throw new Error("AKC output is only captured for ARM Wooting devices.");
+    if (scope !== 0) throw new Error("AKC save scope is only verified for scope 0.");
+    if (completeMessage.length > 56) return this.writeAkcProfileChunked(scope, completeMessage, true);
+    const packet = encodeWootingAkcProfileReport(scope, completeMessage);
+    const run = this.commandLock.then(() => this.device.sendReport(packet.reportId, new Uint8Array(packet.data)));
+    this.commandLock = run.then(() => undefined, () => undefined);
+    await run;
+    await this.saveProfile(WOOTING_COMMAND.saveAkcProfile, scope, true);
+    const reply = await this.sendProfileCommand(WOOTING_COMMAND.getAkcProfile, scope);
+    const length = reply && wootingReplyOk(reply) ? (reply[4] ?? 0) | ((reply[5] ?? 0) << 8) : -1;
+    const actual = reply?.subarray(6, 6 + length);
+    if (!actual || length !== completeMessage.length || actual.some((byte, index) => byte !== completeMessage[index])) {
+      throw new Error("Wooting AKC save was not confirmed by read-back.");
+    }
+    this.replies.clear();
+    return true;
+  }
+
+  /**
+   * Persist an AKC profile that exceeds one 62-byte report: Wootility sends
+   * `PartialAKCProfile` chunks of 10 items, setting the save bit only on the
+   * last chunk, then verifies the combined multi-part read.
+   */
+  async writeAkcProfileChunked(scope: number, completeMessage: Uint8Array, confirmed: boolean): Promise<boolean> {
+    if (!confirmed) throw new Error("Saving a Wooting AKC profile requires confirmation.");
+    await this.open();
+    if (!this.multiReport()) throw new Error("AKC output is only captured for ARM Wooting devices.");
+    if (scope !== 0) throw new Error("AKC save scope is only verified for scope 0.");
+    const chunks = encodeWootingAkcChunks(completeMessage);
+    for (let index = 0; index < chunks.length; index += 1) {
+      const packet = encodeWootingAkcChunkReport(chunks[index]!, {
+        multiReport: true, save: index === chunks.length - 1, profileIndex: scope,
+      });
+      const run = this.commandLock.then(() => this.sendOutput(packet));
+      this.commandLock = run.then(() => undefined, () => undefined);
+      await run;
+    }
+    await this.saveProfile(WOOTING_COMMAND.saveAkcProfile, scope, true);
+    this.replies.clear();
+    const expected = decodeWootingAkcProfile(new Uint8Array([
+      0xd1, 0xda, WOOTING_COMMAND.getAkcProfile, 0x88,
+      completeMessage.length & 0xff, completeMessage.length >>> 8, ...completeMessage,
+    ]));
+    const actual = await this.readAkc(scope);
+    const signature = (profile: WootingAkcProfile | null): string => profile
+      ? profile.combos.map((combo) => `${combo.keyIndex}:${combo.layer}:${combo.kind}:${[...combo.raw]}`).sort().join("|")
+      : "";
+    if (!expected || signature(actual) !== signature(expected)) {
+      throw new Error("Wooting AKC chunked save was not confirmed by read-back.");
+    }
+    this.replies.clear();
+    return true;
+  }
+
+  /** Replace one AKC binding in the current profile, preserving other items. */
+  async editAkcItem(
+    scope: number,
+    keyIndex: number,
+    layer: number,
+    binding: WootingAkcPayloadWrite | null,
+    confirmed: boolean,
+  ): Promise<boolean> {
+    if (!confirmed) throw new Error("Saving a Wooting AKC profile requires confirmation.");
+    await this.open();
+    if (scope !== 0) throw new Error("AKC save scope is only verified for scope 0.");
+    this.replies.clear();
+    const profile = await this.readAkc(scope);
+    if (!profile) throw new Error("Could not read a complete AKC profile before editing.");
+    const original = encodeWootingAkcProfileFromItems(profile.combos.map((combo) => combo.raw));
+    const item = binding ? encodeWootingAkcItem({
+      keyIndex, layer, kind: binding.kind, payload: encodeWootingAkcPayload(binding),
+    }) : null;
+    const edited = patchWootingAkcProfile(original, keyIndex, layer, item);
+    return this.writeAkcProfileChunked(scope, edited, true);
+  }
+
+  private globalSettingsMatch(
+    actual: NonNullable<ReturnType<typeof decodeWootingGlobalSettings>>,
+    changes: Parameters<typeof patchWootingGlobalSettings>[1],
+  ): boolean {
+    return (changes.rgbDimMinutes === undefined || actual.rgbSleep?.dimMinutes === changes.rgbDimMinutes)
+      && (changes.rgbOffMinutes === undefined || actual.rgbSleep?.offMinutes === changes.rgbOffMinutes)
+      && (changes.rgbTurnOff === undefined || actual.rgbSleep?.turnOff === changes.rgbTurnOff)
+      && (changes.invertNumLock === undefined || actual.invertNumLock === changes.invertNumLock)
+      && (changes.debounceFilter === undefined || actual.debounceFilter === changes.debounceFilter)
+      && (changes.deviceName === undefined || actual.deviceName === changes.deviceName);
   }
 
   /**
@@ -607,7 +1106,7 @@ export class WootingHidClient {
    */
   async setSingleKeyColor(keyIndex: number, red: number, green: number, blue: number): Promise<boolean> {
     await this.open();
-    const reply = await this.sendRawWrite(encodeWootingSingleColor(keyIndex, red, green, blue));
+    const reply = await this.sendRawWrite(encodeWootingSingleColor(keyIndex, red, green, blue, { multiReport: this.multiReport() }));
     if (!reply || !wootingReplyOk(reply)) throw new Error(`Single-key color was not accepted (key ${keyIndex}).`);
     this.replies.clear();
     return true;
@@ -620,8 +1119,8 @@ export class WootingHidClient {
   async resetRgb(keyIndex?: number): Promise<boolean> {
     await this.open();
     const buffer = keyIndex === undefined
-      ? encodeWootingCommand(WOOTING_COMMAND.wootDevResetAll, 0, 0, 0, 0, { multiReport: true })
-      : encodeWootingProfileCommand(WOOTING_COMMAND.wootDevResetColor, keyIndex, { multiReport: true });
+      ? encodeWootingCommand(WOOTING_COMMAND.wootDevResetAll, 0, 0, 0, 0, { multiReport: this.multiReport() })
+      : encodeWootingProfileCommand(WOOTING_COMMAND.wootDevResetColor, keyIndex, { multiReport: this.multiReport() });
     const reply = await this.sendRawWrite(buffer);
     if (!reply || !wootingReplyOk(reply)) throw new Error("RGB reset was not accepted.");
     this.replies.clear();
@@ -636,6 +1135,7 @@ export class WootingHidClient {
    */
   async setRgbBuffer(colors: Uint8Array | readonly number[]): Promise<{ applied: boolean }> {
     await this.open();
+    if (!this.multiReport()) return { applied: false };
     const buffer = encodeWootingRgbBuffer(colors);
     const reportId = buffer[0] ?? 5;
     const run = this.commandLock.then(async () => {
@@ -645,7 +1145,10 @@ export class WootingHidClient {
         return { applied: false };
       }
       await wootingDelay(COLLECT_WINDOW_MS);
-      return { applied: true };
+      const refreshed = await this.probeRawCommand(encodeWootingCommand(
+        WOOTING_COMMAND.refreshRgbColors, 0, 0, 0, 0, { multiReport: true },
+      )).catch(() => null);
+      return { applied: refreshed !== null && wootingReplyOk(refreshed) };
     });
     this.commandLock = run.then(() => undefined, () => undefined);
     const result = await run;
@@ -658,6 +1161,35 @@ export class WootingHidClient {
     const run = this.commandLock.then(() => this.probeRawCommand(buffer));
     this.commandLock = run.then(() => undefined, () => undefined);
     return run.catch(() => null);
+  }
+
+  /**
+   * Send an output-report packet using Wootility's transport rules. ARM uses
+   * magic D1 and report IDs 1–6 with fixed sizes; Standard/AVR sends report ID
+   * 0, padded to the interface revision (64-byte chunks, or one 128/256-byte
+   * report).
+   */
+  private async sendOutput(packet: { reportId: number; data: Uint8Array }): Promise<void> {
+    if (this.multiReport()) {
+      await this.device.sendReport(packet.reportId, new Uint8Array(packet.data));
+      return;
+    }
+    const collection = WootingHidClient.configCollection(this.device.collections);
+    const reportCount = collection?.outputReports?.[0]?.items?.reduce((sum, item) => sum + (item.reportCount ?? 0), 0) ?? 0;
+    if (reportCount === 64) {
+      const padded = new Uint8Array(2046);
+      padded.set(packet.data);
+      for (let at = 0; at < padded.length; at += 64) {
+        await this.device.sendReport(0, padded.slice(at, at + 64));
+      }
+      return;
+    }
+    const size = reportCount === 256 ? 256 : reportCount === 128 ? 128 : 0;
+    if (!size) throw new Error("Unable to determine the Wooting Standard interface revision.");
+    if (packet.data.length > size) throw new Error(`Wooting Standard packet exceeds the ${size}-byte report.`);
+    const padded = new Uint8Array(size);
+    padded.set(packet.data);
+    await this.device.sendReport(0, padded);
   }
   /**
    * Send a command and gather every input report it triggers within a short
@@ -702,7 +1234,7 @@ export class WootingHidClient {
     // timeouts once, not on every background refresh.
     const key = 0x10000 | ((commandId << 8) | (slot & 0xff));
     if (this.replies.has(key)) return this.replies.get(key) ?? null;
-    const run = this.commandLock.then(() => this.probeRawCommand(encodeWootingProfileCommand(commandId, slot)));
+    const run = this.commandLock.then(() => this.probeRawCommand(encodeWootingProfileCommand(commandId, slot, { multiReport: this.multiReport() })));
     this.commandLock = run.then(() => undefined, () => undefined);
     const raw = await run.catch(() => null);
     this.replies.set(key, raw);
@@ -719,7 +1251,7 @@ export class WootingHidClient {
   private async probeCommand(commandId: number, param0 = 0): Promise<Uint8Array | null> {
     // Magic + command payload, without hidapi's leading report-index byte —
     // WebHID carries the report id separately.
-    return this.probeRawCommand(encodeWootingCommand(commandId, param0, 0, 0, 0, { multiReport: true }));
+    return this.probeRawCommand(encodeWootingCommand(commandId, param0, 0, 0, 0, { multiReport: this.multiReport() }));
   }
 
   /** Send a pre-encoded command buffer and read its reply off both channels. */

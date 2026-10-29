@@ -43,11 +43,19 @@ filters, the driver registry, and shared status types live under
 | Wooting | `@openmouse/keyboard-protocol/wooting` |
 | Wuque Studio | `@openmouse/keyboard-protocol/wuque` |
 | Kochi Hummingbird 68 | `@openmouse/keyboard-protocol/kochi` |
+| Razer | `@openmouse/keyboard-protocol/razer` |
+| Logitech | `@openmouse/keyboard-protocol/logitech` |
+| SteelSeries | `@openmouse/keyboard-protocol/steelseries` |
 
 Kochi Hummingbird 68 (`1CA2:0901`) supports reading and changing Windows/Mac
 mode on its `FFA0:1` USB configuration collection. Both directions and mode
 read-back were exercised on hardware on macOS. This is not full keyboard
 configuration support; see [the evidence and limitations](docs/kochi-hb68.md).
+
+Wooting discovery covers the Standard and ARM configuration collections and the
+model families cataloged by Wootility 5.4.2. Only the 60HE+ protocol has prior
+hardware captures in this repository; the [Wooting coverage ledger](docs/wooting-support.md)
+tracks the remaining configuration and device validation work.
 
 An exported protocol means OpenMouse implements that wire format. It does not
 claim every keyboard from that brand works. When a catalog provides a
@@ -61,6 +69,33 @@ identity, key layout/keycodes, per-key travel and rapid trigger, lighting,
 macros, advanced keys and global settings. The driver reads all of it and
 sends only the safe write subset — it never issues factory reset, firmware,
 voice, haptics, displayer or high-polling-rate commands.
+
+### Razer, Logitech and SteelSeries
+
+These three drivers are implemented from vendor-shipped or public protocol
+sources, not from hardware exercised through this package. Every catalog entry
+is `verified: false` until that changes.
+
+- **Razer** (`0x1532`): 90-byte control reports. Identity, polling rate and
+  brightness read with write/read-back; RGB matrix effects, model-gated custom
+  RGB rows and standard/analog key bindings. Game-mode LED state has read-back;
+  binding get-direction commands remain unverified on hardware. See
+  [the Razer ledger](docs/razer-support.md).
+- **Logitech** (`0x046D`): HID++ 2.0 identity, battery, polling rate,
+  brightness, receiver pairing-slot discovery, `0x1B08` analog switches,
+  `0x8081` solid per-key lighting, `0x8071` effects, `0x8070` legacy zone
+  effects with RAM read-back, and `0x1B04` remapping. Per-key FKC analog tags
+  remain open. See [the Logitech ledger](docs/logitech-support.md).
+- **SteelSeries** (`0x1038`): wired Apex Pro TKL (`0x1628`, `0x1642`) on-board
+  profile read/write, per-key actuation, rapid trigger/Key Guard, sensitivity,
+  Rapid Tap, direct per-key lighting and profile persistence. The `0x1628`
+  additionally has schema-gated second-layer actuation, Rapid Tap pairs and
+  profile/direct OLED frames. `saveProfile()` verifies the read-back. See
+  [the SteelSeries ledger](docs/steelseries-support.md).
+
+Further Razer, Logitech and SteelSeries feature expansion is paused for now.
+The linked ledgers identify unsupported flows and hardware-validation gaps;
+the current implementations do not claim complete per-model feature coverage.
 
 
 ### BABAO60 HE validation status

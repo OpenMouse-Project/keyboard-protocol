@@ -37,6 +37,15 @@
       ],
       "@openmouse/keyboard-protocol/kochi": [
         "./src/kochi/index.ts"
+      ],
+      "@openmouse/keyboard-protocol/razer": [
+        "./src/razer/index.ts"
+      ],
+      "@openmouse/keyboard-protocol/logitech": [
+        "./src/logitech/index.ts"
+      ],
+      "@openmouse/keyboard-protocol/steelseries": [
+        "./src/steelseries/index.ts"
       ]
     }
   },
