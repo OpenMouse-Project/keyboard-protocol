@@ -512,7 +512,7 @@ export class LogitechKeyboardHidClient {
   private async readLightingZones(): Promise<LogitechLightingState | null> {
     const index = await this.getFeature(LOGITECH_FEATURE.perKeyLightingV2);
     const legacy = await this.readLegacyZonesRaw().catch(() => null);
-    if (!index && !legacy) return null;
+    if (!index && !legacy && !(await this.getFeature(LOGITECH_FEATURE.rgbEffects))) return null;
     const zones: number[] = [];
     if (index) {
       for (const page of [0, 1, 2]) {

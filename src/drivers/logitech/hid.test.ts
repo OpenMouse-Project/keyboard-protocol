@@ -195,6 +195,19 @@ test("the Logitech client reads identity, battery, report rate and brightness ov
   await client.close();
 });
 
+test("RGB effects remain discoverable without per-key or legacy lighting", async () => {
+  const device = new FakeLogitechKeyboard();
+  device.supportsPerKeyLighting = false;
+  device.supportsLegacyLighting = false;
+  const client = new LogitechKeyboardHidClient(device as unknown as HIDDevice);
+  const status = await client.readStatus();
+  assert.deepEqual(status.logitech?.lighting?.zones, []);
+  assert.equal(status.logitech?.lighting?.rgbZones[0]?.effects.length, 2);
+  await client.setRgbEffect("Static", { red: 8, green: 16, blue: 32 });
+  assert.ok(device.writes.some(write => write.featureIndex === 8 && write.functionId === 1));
+  await client.close();
+});
+
 test("setPollingRate writes the discriminant and verifies the read-back", async () => {
   const device = new FakeLogitechKeyboard();
   const client = new LogitechKeyboardHidClient(device as unknown as HIDDevice);
