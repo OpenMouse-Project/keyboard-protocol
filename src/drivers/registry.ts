@@ -1,9 +1,17 @@
 import { WootingHidClient } from "./wooting/hid.ts";
 import { WuqueHidClient } from "./wuque/hid.ts";
-
 import { KochiHidClient } from "./kochi/hid.ts";
+import { RazerKeyboardHidClient } from "./razer/hid.ts";
+import { LogitechKeyboardHidClient } from "./logitech/hid.ts";
+import { SteelSeriesKeyboardHidClient } from "./steelseries/hid.ts";
 
-export type SupportedClient = WootingHidClient | WuqueHidClient | KochiHidClient;
+export type SupportedClient =
+  | WootingHidClient
+  | WuqueHidClient
+  | KochiHidClient
+  | RazerKeyboardHidClient
+  | LogitechKeyboardHidClient
+  | SteelSeriesKeyboardHidClient;
 
 export interface DeviceDriver {
   brand: string;
@@ -16,6 +24,9 @@ export const DEVICE_DRIVERS: readonly DeviceDriver[] = [
   { brand: "Kochi", supports: (device) => KochiHidClient.isSupported(device), create: (device) => new KochiHidClient(device), score: () => 6 },
   { brand: "Wooting", supports: (device) => WootingHidClient.isSupported(device), create: (device) => new WootingHidClient(device), score: () => 6 },
   { brand: "Wuque Studio", supports: (device) => WuqueHidClient.isSupported(device), create: (device) => new WuqueHidClient(device), score: () => 6 },
+  { brand: "Razer", supports: (device) => RazerKeyboardHidClient.isSupported(device), create: (device) => new RazerKeyboardHidClient(device), score: () => 6 },
+  { brand: "Logitech", supports: (device) => LogitechKeyboardHidClient.isSupported(device), create: (device) => new LogitechKeyboardHidClient(device), score: () => 6 },
+  { brand: "SteelSeries", supports: (device) => SteelSeriesKeyboardHidClient.isSupported(device), create: (device) => new SteelSeriesKeyboardHidClient(device), score: () => 6 },
 ];
 
 function driverFor(device: HIDDevice): DeviceDriver | undefined {

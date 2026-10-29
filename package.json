@@ -5,6 +5,10 @@
   "type": "module",
   "files": [
     "dist",
+    "docs/wooting-support.md",
+    "docs/razer-support.md",
+    "docs/logitech-support.md",
+    "docs/steelseries-support.md",
     "README.md",
     "CONTRIBUTING.md"
   ],
@@ -32,6 +36,18 @@
     "./kochi": {
       "types": "./dist/kochi/index.d.ts",
       "import": "./dist/kochi/index.js"
+    },
+    "./razer": {
+      "types": "./dist/razer/index.d.ts",
+      "import": "./dist/razer/index.js"
+    },
+    "./logitech": {
+      "types": "./dist/logitech/index.d.ts",
+      "import": "./dist/logitech/index.js"
+    },
+    "./steelseries": {
+      "types": "./dist/steelseries/index.d.ts",
+      "import": "./dist/steelseries/index.js"
     }
   },
   "scripts": {

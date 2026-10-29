@@ -8,8 +8,10 @@
 import type {
   WootingActuationProfile,
   WootingAkcProfile,
+  WootingCapabilities,
   WootingDksProfile,
   WootingFlashStats,
+  WootingFullRapidTriggerProfile,
   WootingGamepadMapping,
   WootingGamepadProfile,
   WootingGlobalSettings,
@@ -31,6 +33,9 @@ import type {
   WuqueMacroSpaceInfo,
   WuqueUsbModeStatus,
 } from "@openmouse/keyboard-protocol/wuque";
+import type { RazerKeyboardState } from "@openmouse/keyboard-protocol/razer";
+import type { LogitechKeyboardState } from "@openmouse/keyboard-protocol/logitech";
+import type { SteelSeriesApexProfile } from "@openmouse/keyboard-protocol/steelseries";
 
 export interface KeyboardUiHints {
   /** Stable driver id, e.g. "wooting". */
@@ -187,8 +192,12 @@ export interface KeyboardStatus {
   analogProfile?: WootingAnalogProfileFull | null;
   /** Per-key actuation overrides for one slot (0x31). */
   perKeyActuation?: WootingActuationProfile | null;
-  /** Rapid-trigger profile for one slot (0x36). */
+  /** Legacy rapid-trigger profile for one slot (0x36; empty on ARM). */
   rapidTrigger?: WootingRapidTriggerProfile | null;
+  /** Per-key rapid-trigger groups for one slot (full 0x3D or partial 0x36). */
+  perKeyRapidTrigger?: WootingFullRapidTriggerProfile | null;
+  /** Model/firmware gates used to choose the command paths. */
+  capabilities?: WootingCapabilities | null;
   /** Key mappings for one slot (0x30 / 0x11 / 0x12). */
   mappings?: WootingMappings | null;
   /** Dynamic-keystroke profile for one slot (0x18). */
@@ -205,4 +214,10 @@ export interface KeyboardStatus {
   analogSnapshot?: WootingAnalogSnapshot | null;
   /** Wuque Studio board state (identity, global settings, keys, lighting, macros). */
   wuque?: WuqueStatus | null;
+  /** Razer keyboard state decoded from the 90-byte control channel. */
+  razer?: RazerKeyboardState | null;
+  /** Logitech HID++ keyboard state. */
+  logitech?: LogitechKeyboardState | null;
+  /** SteelSeries Apex Pro on-board analog profile (persisted snapshot). */
+  steelseries?: { productId: number; profile: SteelSeriesApexProfile | null; verified: boolean } | null;
 }
