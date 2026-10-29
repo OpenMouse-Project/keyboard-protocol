@@ -265,12 +265,14 @@ export class SteelSeriesKeyboardHidClient {
     });
   }
 
-  /** Persist every live value in the cached profile to the on-board slot. */
-  async saveProfile(slot = 0): Promise<SteelSeriesApexProfile> {
+  /** Persist every live value in the cached profile to its own on-board slot. */
+  async saveProfile(slot?: number): Promise<SteelSeriesApexProfile> {
     return this.serialized(async () => {
       const profile = await this.currentProfile();
+      const target = slot ?? profile.slot;
+      if (target !== profile.slot) throw new Error("saveProfile refuses a cross-slot overwrite: the cached profile was read from a different slot.");
       const source = this.cachedBlob ?? await this.readProfileBlob(profile.slot);
-      return this.persistProfile(slot, profile, source);
+      return this.persistProfile(target, profile, source);
     });
   }
 
@@ -436,7 +438,9 @@ export class SteelSeriesKeyboardHidClient {
     return this.serialized(async () => {
       await this.open();
       const firmwareVersion = await this.readFirmware().catch(() => null);
-      const profile = await this.readProfile(0).catch(() => null);
+      const profile = this.cachedProfile?.live
+        ? this.cachedProfile
+        : await this.readProfile(0).catch(() => null);
       const product = STEELSERIES_KEYBOARD_PRODUCTS.get(this.device.productId)!;
       const lines: string[] = [];
       if (firmwareVersion) lines.push(`Firmware: ${firmwareVersion}`);

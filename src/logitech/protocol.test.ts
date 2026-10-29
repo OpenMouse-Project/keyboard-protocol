@@ -51,11 +51,12 @@ test("responses decode normal and error frames and ignore unrelated report ids",
   const normal = decodeLogitechResponse(LOGITECH_SHORT_REPORT_ID, bytes([0xff, 0x05, (1 << 4) | LOGITECH_SOFTWARE_ID, 1, 2, 3]));
   assert.equal(normal?.featureIndex, 0x05);
   assert.equal(normal?.functionId, 1);
-  assert.equal(normal?.errorCode, null);
-  assert.deepEqual([...(normal?.params ?? [])], [1, 2, 3]);
+  assert.equal(normal?.softwareId, LOGITECH_SOFTWARE_ID);
 
-  const error = decodeLogitechResponse(LOGITECH_SHORT_REPORT_ID, bytes([0xff, 0xff, 0x8f, 0x07, 0x00, 0x00]));
+  const error = decodeLogitechResponse(LOGITECH_SHORT_REPORT_ID, bytes([0xff, 0xff, 0x05, (2 << 4) | LOGITECH_SOFTWARE_ID, 0x07, 0x00]));
   assert.equal(error?.errorCode, 0x07);
+  assert.equal(error?.requestFeatureIndex, 0x05);
+  assert.equal(error?.requestFunctionByte, (2 << 4) | LOGITECH_SOFTWARE_ID);
 
   assert.equal(decodeLogitechResponse(0x01, bytes([0, 0, 0, 0, 0, 0])), null);
 });

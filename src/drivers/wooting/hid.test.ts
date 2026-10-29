@@ -5,6 +5,8 @@ import { WootingHidClient } from "./hid.ts";
 import { deviceBrand } from "../registry.ts";
 import {
   decodeProtobufFields,
+  encodeWootingAkcItem,
+  encodeWootingAkcPayload,
   encodeWootingAkcProfileFromItems,
   WOOTING_VENDOR_ID,
 } from "@openmouse/keyboard-protocol/wooting";
@@ -23,6 +25,8 @@ interface FakeOptions {
   profileNames?: (string | null)[];
   /** Raw length-prefixed bodies answered verbatim per command (live captures). */
   blobBodies?: Record<number, number[] | null>;
+  /** Commands answered with real Standard single-report framing (`d0 da cmd 88 <len:u8>`); default is ARM multi-report framing. */
+  standardBlobs?: number[];
   /** Nested varint pairs answered for profile-blob reads; null echoes header-only. */
   blobFields?: Record<number, Array<readonly [number, number]> | null>;
   /** Scalar payload byte answered for count/flash reads; null = error status. */
@@ -64,7 +68,7 @@ function fakeBlobAnswer(command: number, nested: Array<readonly [number, number]
 }
 
 function fakeWooting(
-  { reply = 0, channel = "input", productId = 0x1322, usagePage = 0xff55, featureReportId = 1, profileIndex = [0, 0, 1], profileNames = ["Default"], blobFields = {}, blobBodies = {}, scalarReplies = {}, applyGlobalOutput = false, applyRgbCoreOutput = false, applyAkcOutput = false, applyKeyboardBaseOutput = false, applyActuationOutput = false, applyFullRapidTriggerOutput = false, applyKeyPropertyOutput = false, applyRgbColorsOutput = false, firmwareVersion = [2, 13, 0] }: FakeOptions = {},
+  { reply = 0, channel = "input", productId = 0x1322, usagePage = 0xff55, featureReportId = 1, profileIndex = [0, 0, 1], profileNames = ["Default"], blobFields = {}, blobBodies = {}, standardBlobs = [], scalarReplies = {}, applyGlobalOutput = false, applyRgbCoreOutput = false, applyAkcOutput = false, applyKeyboardBaseOutput = false, applyActuationOutput = false, applyFullRapidTriggerOutput = false, applyKeyPropertyOutput = false, applyRgbColorsOutput = false, firmwareVersion = [2, 13, 0] }: FakeOptions = {},
 ) {
   let inputListener: ((event: HIDInputReportEvent) => void) | null = null;
   const sent: Array<{ reportId: number; data: Uint8Array }> = [];
@@ -103,6 +107,9 @@ function fakeWooting(
     if (lastCommand in blobBodies) {
       const body = blobBodies[lastCommand];
       if (body === null || body === undefined) return null;
+      if (standardBlobs.includes(lastCommand)) {
+        return new Uint8Array([0xd0, 0xda, lastCommand, 0x88, body.length, ...body]);
+      }
       return new Uint8Array([0xd1, 0xda, lastCommand, 0x88, body.length, 0x00, ...body]);
     }
     if (lastCommand in blobFields) {
@@ -381,6 +388,10 @@ test("RGB core write requires exact device read-back", async () => {
 test("profile readers use populated Standard firmware actuation, RT, and DKS replies", async () => {
   const { device } = fakeWooting({
     usagePage: 0x1337,
+    // The 0x31 reply uses real Standard single-report framing (magic D0,
+    // one-byte length): the ARM decode misreads its length prefix, so this
+    // fails without the multiReport fix.
+    standardBlobs: [0x31],
     blobBodies: {
       0x31: [0x0a, 4, 0x08, 0xb3, 0x86, 0x01],
       0x36: [0x0a, 4, 0x08, 1, 0x10, 5],
@@ -464,6 +475,38 @@ test("AKC item editing preserves an existing SOCD binding through add and remove
   assert.equal(await client.editAkcItem(0, 0xab, 0, null, true), true);
   assert.equal(fake.sentReports[1]?.reportId, 1);
   assert.deepEqual([...fake.sentReports[1]!.data.subarray(6, 24)], initial);
+});
+
+test("AKC add-first-item round-trips on an empty profile", async () => {
+  // The board answers OK with a zero-length body: no combos yet, not a failure.
+  const fake = fakeWooting({ blobBodies: { 0x34: [] }, applyAkcOutput: true });
+  const client = new WootingHidClient(fake.device);
+  assert.equal(await client.editAkcItem(0, 0xab, 0, { kind: "toggleKey", keybind: 0x77 }, true), true);
+  const added = await client.readAkc(0);
+  assert.equal(added?.combos.length, 1);
+  assert.equal(added?.combos[0]?.keyIndex, 0xab);
+  assert.equal(added?.combos[0]?.kind, "toggleKey");
+
+  // A silent board still fails instead of inventing an empty profile.
+  const silent = fakeWooting({ blobBodies: {} });
+  await assert.rejects(
+    () => new WootingHidClient(silent.device).editAkcItem(0, 0xab, 0, { kind: "toggleKey", keybind: 0x77 }, true),
+    /Could not read a complete AKC profile/,
+  );
+});
+
+test("AKC remove-last-item round-trips back to an empty profile", async () => {
+  const item = encodeWootingAkcItem({
+    keyIndex: 0xab, layer: 0, kind: "toggleKey",
+    payload: encodeWootingAkcPayload({ kind: "toggleKey", keybind: 0x77 }),
+  });
+  const single = [...encodeWootingAkcProfileFromItems([item])];
+  const fake = fakeWooting({ blobBodies: { 0x34: single }, applyAkcOutput: true });
+  const client = new WootingHidClient(fake.device);
+  assert.equal((await client.readAkc(0))?.combos.length, 1);
+  assert.equal(await client.editAkcItem(0, 0xab, 0, null, true), true);
+  // Removing the last item leaves an empty profile, which reads back as null.
+  assert.equal(await client.readAkc(0), null);
 });
 
 test("Standard config collection uses single-report framing", async () => {

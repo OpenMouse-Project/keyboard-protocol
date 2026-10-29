@@ -28,6 +28,7 @@ class FakeRazerKeyboard {
   pollingCode = 0x01;
   gameModeLed = false;
   ignoreGameModeWrites = false;
+  denyFeatureReads: DOMException | null = null;
   writes: { transactionId: number; commandClass: number; commandId: number; args: number[] }[] = [];
   private listeners = new Set<(event: HIDInputReportEvent) => void>();
   private nextReply: Uint8Array | null = null;
@@ -88,6 +89,7 @@ class FakeRazerKeyboard {
   }
 
   async receiveFeatureReport(): Promise<DataView> {
+    if (this.denyFeatureReads) throw this.denyFeatureReads;
     if (!this.nextReply) throw new Error("No Razer reply prepared.");
     const reply = this.nextReply;
     this.nextReply = null;
@@ -246,4 +248,25 @@ test("models outside the enabled subset reject new methods without sending featu
 test("a non-keyboard Razer product id is rejected", () => {
   const device = { ...new FakeRazerKeyboard(), productId: 0x00c1 };
   assert.equal(RazerKeyboardHidClient.isSupported(device as unknown as HIDDevice), false);
+});
+
+test("a permission denial during discovery is rethrown and faults the client", async () => {
+  const device = new FakeRazerKeyboard();
+  device.denyFeatureReads = new DOMException("The requested operation was blocked.", "NotAllowedError");
+  const client = new RazerKeyboardHidClient(device as unknown as HIDDevice);
+  await assert.rejects(client.readFirmware(), (error: unknown) => error instanceof DOMException
+    && error.name === "NotAllowedError");
+  // The permission error is terminal: the client is faulted, not left probing.
+  await assert.rejects(client.readSerial(), /Reconnect the Razer keyboard/);
+  await client.close();
+});
+
+test("identity reads open a fresh client before exchanging", async () => {
+  const device = new FakeRazerKeyboard();
+  const client = new RazerKeyboardHidClient(device as unknown as HIDDevice);
+  assert.equal(device.opened, false);
+  assert.equal(await client.readFirmware(), "2.11");
+  assert.equal(await client.readSerial(), "RZ01");
+  assert.equal(device.opened, true);
+  await client.close();
 });

@@ -402,9 +402,10 @@ verify 0x0B`.
 
 Wootility's complete "Save to Keyboard" sequence is ordered: RGB core `0x16`,
 color pages `0x0E/0x0F`, feature `0x08` save, mapping chunks `0x1B` ×4, RT
-`0x1D`, base `0x11`, actuation `0x13`, empty `0x12`, keymap chunks `0x14`,
+`0x1D`, base `0x11`, gamepad `0x13`, a small `0x12` block, keymap chunks `0x14`,
 actuation commit `0x15`, AKC `0x18`, feature `0x35`, metadata `0x1A`, tracker
-`0x48`, metadata re-stage, reload `0x07`, gamepad `0x28`, global `0x17`, and a
+`0x48`, metadata re-stage, then output `0x07`, `0x28`, and `0x17` (roles not yet
+correlated by read-back), and a
 final AKC pass. Many blocks persist through their output save bit; RGB and AKC
 also use the feature saves. This package currently reads active slot/names/count,
 performs the RAM switch sequence, and exposes individual block saves; it does

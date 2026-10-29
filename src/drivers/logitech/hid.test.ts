@@ -166,7 +166,14 @@ class FakeLogitechKeyboard {
         return response(4, 2, [], this.deviceIndex);
       }
     }
-    return response(0xff, 8, [0x07], this.deviceIndex);
+    // HID++ 2.0 error frame echoes the failing request: [devIx, 0xff, reqFeatIx, reqFn|swId, errCode].
+    const data = new Uint8Array(19);
+    data[0] = this.deviceIndex;
+    data[1] = 0xff;
+    data[2] = featureIndex;
+    data[3] = (functionId << 4) | LOGITECH_SOFTWARE_ID;
+    data[4] = 0x07;
+    return new DataView(data.buffer);
   }
 }
 
@@ -241,6 +248,14 @@ test("0x8071 applies a static effect to every cluster that advertises it", async
   await client.setRgbEffect("Static", { red: 1, green: 2, blue: 3 }, 1000);
   const write = device.writes.find((entry) => entry.featureIndex === 8 && entry.functionId === 1);
   assert.deepEqual(write?.params.slice(0, 6), [0, 1, 1, 2, 3, 2]);
+  await client.close();
+});
+
+test("0x8071 rejects an effect no cluster advertises without writing", async () => {
+  const device = new FakeLogitechKeyboard();
+  const client = new LogitechKeyboardHidClient(device as unknown as HIDDevice);
+  await assert.rejects(client.setRgbEffect("Wave"), /No Logitech RGB cluster advertises the Wave effect/);
+  assert.equal(device.writes.filter((entry) => entry.featureIndex === 8 && entry.functionId === 1).length, 0);
   await client.close();
 });
 

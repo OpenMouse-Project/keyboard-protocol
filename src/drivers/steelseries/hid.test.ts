@@ -225,3 +225,29 @@ test("a non-analog key is rejected before a frame is sent", async () => {
   assert.ok(!STEELSERIES_APEX_PRO_2023_SLOTS.includes(0x29));
   await client.close();
 });
+
+test("readStatus preserves unsaved live edits for a later saveProfile", async () => {
+  const device = new FakeSteelSeriesKeyboard();
+  const client = new SteelSeriesKeyboardHidClient(device as unknown as HIDDevice);
+  await client.setActuation([0x1a], 10);
+  const status = await client.readStatus();
+  assert.equal(status.steelseries?.profile?.keys.find((entry) => entry.usage === 0x1a)?.tenthsMm, 10);
+  assert.equal(status.steelseries?.profile?.live, true);
+  const saved = await client.saveProfile();
+  assert.equal(saved.live, false);
+  assert.equal(saved.keys.find((entry) => entry.usage === 0x1a)?.tenthsMm, 10);
+  const reread = await client.readAnalogProfile();
+  assert.equal(reread.keys.find((entry) => entry.usage === 0x1a)?.tenthsMm, 10);
+  await client.close();
+});
+
+test("saveProfile defaults to the cached slot and refuses a cross-slot overwrite", async () => {
+  const device = new FakeSteelSeriesKeyboard();
+  const client = new SteelSeriesKeyboardHidClient(device as unknown as HIDDevice);
+  await client.readAnalogProfile(1);
+  await assert.rejects(client.saveProfile(0), /cross-slot/);
+  const saved = await client.saveProfile();
+  assert.equal(saved.slot, 1);
+  assert.equal(saved.live, false);
+  await client.close();
+});

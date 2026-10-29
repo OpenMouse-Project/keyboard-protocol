@@ -468,7 +468,7 @@ export class WootingHidClient {
     const target = slot ?? await this.activeSlotOrDefault();
     if (target === null) return null;
     const reply = await this.sendProfileCommand(WOOTING_COMMAND.getActuationProfile, target).catch(() => null);
-    return reply ? decodeWootingActuationProfile(reply) : null;
+    return reply ? decodeWootingActuationProfile(reply, { multiReport: this.multiReport() }) : null;
   }
 
   /**
@@ -1059,7 +1059,11 @@ export class WootingHidClient {
     const signature = (profile: WootingAkcProfile | null): string => profile
       ? profile.combos.map((combo) => `${combo.keyIndex}:${combo.layer}:${combo.kind}:${[...combo.raw]}`).sort().join("|")
       : "";
-    if (!expected || signature(actual) !== signature(expected)) {
+    // An entry-less message is an empty profile: match it against an empty
+    // combo list instead of failing after the flash save already ran.
+    const expectedSignature = expected ? signature(expected)
+      : chunks.every((chunk) => chunk.totalItems === 0) ? "" : null;
+    if (expectedSignature === null || signature(actual) !== expectedSignature) {
       throw new Error("Wooting AKC chunked save was not confirmed by read-back.");
     }
     this.replies.clear();
@@ -1079,8 +1083,21 @@ export class WootingHidClient {
     if (scope !== 0) throw new Error("AKC save scope is only verified for scope 0.");
     this.replies.clear();
     const profile = await this.readAkc(scope);
-    if (!profile) throw new Error("Could not read a complete AKC profile before editing.");
-    const original = encodeWootingAkcProfileFromItems(profile.combos.map((combo) => combo.raw));
+    let original = profile
+      ? encodeWootingAkcProfileFromItems(profile.combos.map((combo) => combo.raw))
+      : null;
+    if (!original) {
+      // An OK reply with a zero-length body is an empty profile, not a
+      // failure: start from the empty combo list so add-first works.
+      // Anything else (silent board, error status) stays an error.
+      // The read above cached its miss, so drop it before re-probing.
+      this.replies.clear();
+      const raw = await this.sendProfileCommand(WOOTING_COMMAND.getAkcProfile, scope);
+      const length = !raw || !wootingReplyOk(raw) ? -1
+        : this.multiReport() ? ((raw[4] ?? 0) | ((raw[5] ?? 0) << 8)) : (raw[4] ?? 0);
+      if (length !== 0) throw new Error("Could not read a complete AKC profile before editing.");
+      original = encodeWootingAkcProfileFromItems([]);
+    }
     const item = binding ? encodeWootingAkcItem({
       keyIndex, layer, kind: binding.kind, payload: encodeWootingAkcPayload(binding),
     }) : null;

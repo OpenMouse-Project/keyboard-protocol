@@ -140,7 +140,16 @@ export class RazerKeyboardHidClient {
       try {
         const args = await this.exchange(RAZER_KEYBOARD_READ.firmware);
         if (decodeRazerFirmware(args) !== null) return;
-      } catch {
+      } catch (error) {
+        // A permission denial (Chrome blocking the Mouse-collection feature
+        // report) is terminal: rethrow instead of probing the next id.
+        const denied = typeof error === "object" && error !== null && "name" in error
+          && (error.name === "NotAllowedError" || error.name === "SecurityError");
+        if (denied) {
+          this.transactionId = null;
+          this.faulted = true;
+          throw error;
+        }
         // A mismatched transaction id is silent; try the next generation.
       }
     }
@@ -150,11 +159,17 @@ export class RazerKeyboardHidClient {
   }
 
   readFirmware(): Promise<string | null> {
-    return this.serialized(async () => decodeRazerFirmware(await this.exchange(RAZER_KEYBOARD_READ.firmware)));
+    return this.serialized(async () => {
+      await this.open();
+      return decodeRazerFirmware(await this.exchange(RAZER_KEYBOARD_READ.firmware));
+    });
   }
 
   readSerial(): Promise<string | null> {
-    return this.serialized(async () => decodeRazerSerial(await this.exchange(RAZER_KEYBOARD_READ.serial)));
+    return this.serialized(async () => {
+      await this.open();
+      return decodeRazerSerial(await this.exchange(RAZER_KEYBOARD_READ.serial));
+    });
   }
 
   private async readIdentity(): Promise<{ firmwareVersion: string | null; serial: string | null }> {

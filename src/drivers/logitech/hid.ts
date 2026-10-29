@@ -52,6 +52,7 @@ interface PendingRequest {
   reportId: number;
   featureIndex: number;
   functionId: number;
+  softwareId: number;
   resolve: (response: LogitechResponse) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -98,7 +99,13 @@ export class LogitechKeyboardHidClient {
     if (!response) return;
     if (response.deviceIndex !== this.deviceIndex) return;
     const isError = response.featureIndex === 0xff;
-    if (!isError && (response.featureIndex !== pending.featureIndex || response.functionId !== pending.functionId)) return;
+    if (isError) {
+      if (response.requestFeatureIndex !== pending.featureIndex) return;
+      if (response.requestFunctionByte !== ((pending.functionId << 4) | pending.softwareId)) return;
+    } else {
+      if (response.featureIndex !== pending.featureIndex || response.functionId !== pending.functionId) return;
+      if (response.softwareId !== pending.softwareId) return;
+    }
     this.pending = null;
     clearTimeout(pending.timer);
     pending.resolve(response);
@@ -139,9 +146,32 @@ export class LogitechKeyboardHidClient {
     return false;
   }
 
+  /**
+   * Fail early only when the collection explicitly declares output reports and
+   * the needed id is absent. Empty or missing declarations stay permissive:
+   * Chrome validates report ids itself and most fixtures carry no descriptors.
+   */
+  private assertReportIdSupported(reportId: number): void {
+    const declared: number[] = [];
+    const visit = (collections: readonly HIDCollectionInfo[]): void => {
+      for (const collection of collections) {
+        declared.push(...collection.outputReports.map((report) => report.reportId));
+        visit(collection.children);
+      }
+    };
+    visit(this.device.collections);
+    if (declared.length > 0 && !declared.includes(reportId)) {
+      throw new Error(`The Logitech keyboard does not advertise output report 0x${reportId.toString(16)}.`);
+    }
+  }
+
   async close(): Promise<void> {
-    this.pending?.reject(new Error("Logitech keyboard disconnected."));
+    const pending = this.pending;
     this.pending = null;
+    if (pending) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("Logitech keyboard disconnected."));
+    }
     if (this.listening) this.device.removeEventListener("inputreport", this.onInputReport);
     this.listening = false;
     if (this.device.opened) await this.device.close();
@@ -161,12 +191,13 @@ export class LogitechKeyboardHidClient {
     long = this.longReports,
   ): Promise<Uint8Array> {
     const { reportId, data } = encodeLogitechRequest(this.deviceIndex, featureIndex, functionId, params, long);
+    this.assertReportIdSupported(reportId);
     const response = await new Promise<LogitechResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending = null;
+        if (this.pending?.timer === timer) this.pending = null;
         reject(new Error(`The Logitech keyboard did not answer feature 0x${featureIndex.toString(16)} function 0x${functionId.toString(16)}.`));
       }, timeoutMs);
-      this.pending = { reportId, featureIndex, functionId, resolve, reject, timer };
+      this.pending = { reportId, featureIndex, functionId, softwareId: (data[2] ?? 0) & 0x0f, resolve, reject, timer };
       void this.device.sendReport(reportId, data).catch((error: unknown) => {
         if (this.pending?.timer === timer) this.pending = null;
         clearTimeout(timer);
@@ -480,6 +511,7 @@ export class LogitechKeyboardHidClient {
         if (!Number.isInteger(value) || value < 0 || value > 255) throw new RangeError("RGB channels must be whole numbers from 0 to 255.");
       }
       await this.requestMode(index, 0x05, [0x01, 0x01, 0x00], false).catch(() => undefined);
+      let applied = 0;
       for (const zone of zones) {
         const effect = zone.effects.find((candidate) => logitechRgbMode(candidate.id) === mode);
         if (!effect) continue;
@@ -505,7 +537,9 @@ export class LogitechKeyboardHidClient {
           params[6] = 100;
         }
         await this.requestMode(index, 0x01, [zone.index, effect.index, ...params, 0x01, 0x00, 0x00, 0x00], true);
+        applied += 1;
       }
+      if (!applied) throw new Error(`No Logitech RGB cluster advertises the ${mode} effect.`);
     });
   }
 

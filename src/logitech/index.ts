@@ -141,9 +141,15 @@ export interface LogitechResponse {
   deviceIndex: number;
   featureIndex: number;
   functionId: number;
+  /** Low nibble of byte 2 on normal frames; the echoed request byte's nibble on error frames. */
+  softwareId: number;
   params: Uint8Array;
   /** Feature index `0xff` marks a HID++ error response. */
   errorCode: number | null;
+  /** Echo of the failing request's feature-index byte (error frames only). */
+  requestFeatureIndex?: number;
+  /** Echo of the failing request's function/software-id byte (error frames only). */
+  requestFunctionByte?: number;
 }
 
 /** Decode an input report body. Returns `null` for an unrelated report id. */
@@ -152,10 +158,21 @@ export function decodeLogitechResponse(reportId: number, data: Uint8Array): Logi
   if (data.length < LOGITECH_SHORT_DATA_LENGTH) return null;
   const featureIndex = data[1] ?? 0;
   const functionId = ((data[2] ?? 0) >> 4) & 0x0f;
+  const softwareId = (data[2] ?? 0) & 0x0f;
   if (featureIndex === 0xff) {
-    return { deviceIndex: data[0] ?? 0, featureIndex, functionId, params: data.slice(3), errorCode: data[3] ?? 0 };
+    // HID++ 2.0 error frame: [devIx, 0xff, reqFeatIx, reqFn|swId, errCode, ...].
+    return {
+      deviceIndex: data[0] ?? 0,
+      featureIndex,
+      functionId,
+      softwareId,
+      params: data.slice(3),
+      errorCode: data[4] ?? 0,
+      requestFeatureIndex: data[2] ?? 0,
+      requestFunctionByte: data[3] ?? 0,
+    };
   }
-  return { deviceIndex: data[0] ?? 0, featureIndex, functionId, params: data.slice(3), errorCode: null };
+  return { deviceIndex: data[0] ?? 0, featureIndex, functionId, softwareId, params: data.slice(3), errorCode: null };
 }
 
 export interface LogitechFeatureInfo {

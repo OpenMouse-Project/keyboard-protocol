@@ -50,7 +50,7 @@ starts behind a three-byte header. File id `0x80 + slot` addresses slots 0..4.
 | Second actuation | feature `38 61 44 02 {hid,h,l}×68` | Preserves unselected secondary thresholds, applies selected raw actuation points. `0x1628` only. |
 | Rapid trigger / Key Guard | feature `38 62 44 {hid,mode}×68` | Modes 0 (off), 2 (Rapid Trigger), 3 (Key Guard), 4. |
 | Rapid-trigger sensitivity | feature `38 65 44 {hid,value}×68` | Raw firmware units; the unit is not established. |
-| Rapid Tap | output `38 66 0|1` | Enable or disable. |
+| Rapid Tap | output `38 66 0\|1` | Enable or disable. |
 | Rapid Tap pairs | output `38 67 0a {index,hid1,hid2,mode-or-0x80,0,0}×10` | Complete ten-slot table, indexed 0–9; `0x80` means report both keys. Requires `0x1628` with schema-8 on-board profile. |
 | OLED profile bitmap | feature `38 83 00` + 640 bytes | 640-byte opaque image; decoded bitmap/packing is not assumed. Cached for `saveProfile()`. `0x1628` only. |
 | OLED direct image | feature `1f 81` + 640 bytes, output `1f 82` | GameSense image override and release; does not change the cached on-board image. `0x1628` only. |
