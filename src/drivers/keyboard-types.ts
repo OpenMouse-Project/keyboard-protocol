@@ -188,6 +188,19 @@ export interface KeychronState {
   travel: { min?: number; max?: number; deadzone?: number } | null;
 }
 
+/** Identity read from a VIA board; `null` where the firmware lacks that command. */
+export interface ViaStatus {
+  protocolVersion: number;
+  layerCount: number | null;
+  firmwareVersion: number | null;
+  keycodesVersion: number | null;
+  /** Layout-option bitfield, the choice per definition `labels` group. */
+  layoutOptions: number | null;
+  uptimeMs: number | null;
+  macroCount: number | null;
+  macroBufferSize: number | null;
+}
+
 export interface KeyboardStatus {
   /** HB68 Windows/Mac mode, verified through both mode queries. */
   kochi?: { systemMode: import("../kochi/index.js").KochiSystemMode };
@@ -243,4 +256,6 @@ export interface KeyboardStatus {
   steelseries?: { productId: number; profile: SteelSeriesApexProfile | null; verified: boolean } | null;
   /** Arbiter Studio keyboard state (travel, light effect, SuperTap). */
   arbiter?: ArbiterKeyboardState | null;
+  /** VIA/QMK board identity; keymap, macros and lighting are read on demand. */
+  via?: ViaStatus | null;
 }

@@ -48,6 +48,13 @@ filters, the driver registry, and shared status types live under
 | SteelSeries | `@openmouse/keyboard-protocol/steelseries` |
 | Keychron (Hall-effect) | `@openmouse/keyboard-protocol/keychron` |
 | Arbiter Studio | `@openmouse/keyboard-protocol/arbiter` |
+| VIA (QMK/VIA firmware, any vendor) | `@openmouse/keyboard-protocol/via` |
+
+The VIA driver matches the raw-HID collection (`0xFF60:0x61`) on any board and
+covers keymaps, keycode names, encoders, macros and custom-menu lighting. Layout
+and menu meaning come from a VIA definition parsed with `parseViaDefinition`.
+It has been exercised on one board (Anvil Native, VIA protocol 11); see
+[the VIA ledger](docs/via-support.md).
 
 Kochi Hummingbird 68 (`1CA2:0901`) supports reading and changing Windows/Mac
 mode on its `FFA0:1` USB configuration collection. Both directions and mode

@@ -42,6 +42,7 @@ import {
   STEELSERIES_KEYBOARD_PRODUCT_IDS,
   STEELSERIES_VENDOR_ID,
 } from "@openmouse/keyboard-protocol/steelseries";
+import { VIA_USAGE, VIA_USAGE_PAGE } from "@openmouse/keyboard-protocol/via";
 
 export const VENDOR_ID = {
   kochi: KOCHI_VENDOR_ID,
@@ -145,6 +146,12 @@ export const ARBITER_HID_FILTERS: HIDDeviceFilter[] = ARBITER_PRODUCTS.map((entr
   usage: ARBITER_CONFIG_USAGE,
 }));
 
+/**
+ * VIA/QMK raw HID (0xFF60:0x61). Any vendor can ship VIA firmware, so this
+ * filter has no vendor or product id; it matches the collection only.
+ */
+export const VIA_HID_FILTERS: HIDDeviceFilter[] = [{ usagePage: VIA_USAGE_PAGE, usage: VIA_USAGE }];
+
 export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...KOCHI_HID_FILTERS,
   ...WOOTING_HID_FILTERS,
@@ -154,4 +161,5 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...STEELSERIES_HID_FILTERS,
   ...KEYCHRON_HID_FILTERS,
   ...ARBITER_HID_FILTERS,
+  ...VIA_HID_FILTERS,
 ];
