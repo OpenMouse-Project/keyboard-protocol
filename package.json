@@ -9,6 +9,7 @@
     "docs/razer-support.md",
     "docs/logitech-support.md",
     "docs/steelseries-support.md",
+    "docs/keychron-support.md",
     "docs/arbiter-support.md",
     "README.md",
     "CONTRIBUTING.md"
@@ -49,6 +50,10 @@
     "./steelseries": {
       "types": "./dist/steelseries/index.d.ts",
       "import": "./dist/steelseries/index.js"
+    },
+    "./keychron": {
+      "types": "./dist/keychron/index.d.ts",
+      "import": "./dist/keychron/index.js"
     },
     "./arbiter": {
       "types": "./dist/arbiter/index.d.ts",

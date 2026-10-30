@@ -6,11 +6,13 @@ import { WuqueHidClient } from "./wuque/hid.ts";
 import { RazerKeyboardHidClient } from "./razer/hid.ts";
 import { LogitechKeyboardHidClient } from "./logitech/hid.ts";
 import { SteelSeriesKeyboardHidClient } from "./steelseries/hid.ts";
+import { KeychronHidClient } from "./keychron/hid.ts";
 import { ArbiterKeyboardHidClient } from "./arbiter/hid.ts";
 import { DEVICE_DRIVERS, clientSupportScore, createSupportedClient, deviceBrand } from "./registry.ts";
 import {
   ARBITER_HID_FILTERS,
   SUPPORTED_HID_FILTERS,
+  KEYCHRON_HID_FILTERS,
   KOCHI_HID_FILTERS,
   LOGITECH_HID_FILTERS,
   RAZER_HID_FILTERS,
@@ -31,6 +33,7 @@ import {
 import { RAZER_KEYBOARD_PRODUCT_IDS, RAZER_VENDOR_ID } from "@openmouse/keyboard-protocol/razer";
 import { LOGITECH_KEYBOARD_PRODUCT_IDS, LOGITECH_RECEIVER_PRODUCT_IDS, LOGITECH_VENDOR_ID } from "@openmouse/keyboard-protocol/logitech";
 import { STEELSERIES_KEYBOARD_PRODUCT_IDS, STEELSERIES_VENDOR_ID } from "@openmouse/keyboard-protocol/steelseries";
+import { KEYCHRON_CONFIG_USAGE, KEYCHRON_CONFIG_USAGE_PAGE, KEYCHRON_HE_PRODUCT_IDS, KEYCHRON_VENDOR_ID } from "@openmouse/keyboard-protocol/keychron";
 
 /** A vendor collection carrying only the fields `isSupported` reads. */
 function collection(usagePage: number, usage: number, children: HIDCollectionInfo[] = []): HIDCollectionInfo {
@@ -57,6 +60,13 @@ const WOOTING_DEVICE = (): HIDDevice => fakeDevice({ vendorId: WOOTING_VENDOR_ID
 const WUQUE_DEVICE = (): HIDDevice =>
   fakeDevice({ vendorId: WUQUE_VENDOR_ID, productId: 0x1b10, collections: [collection(WUQUE_CONFIG_USAGE_PAGE, 1)] });
 
+const KEYCHRON_DEVICE = (overrides: FakeDeviceOptions = {}): HIDDevice => fakeDevice({
+  vendorId: KEYCHRON_VENDOR_ID,
+  productId: KEYCHRON_HE_PRODUCT_IDS[0]!,
+  collections: [collection(KEYCHRON_CONFIG_USAGE_PAGE, KEYCHRON_CONFIG_USAGE)],
+  ...overrides,
+});
+
 const RAZER_DEVICE = (): HIDDevice =>
   fakeDevice({ vendorId: RAZER_VENDOR_ID, productId: 0x02a6, collections: [collection(0x0001, 0x0002)] });
 
@@ -75,7 +85,7 @@ const LOGITECH_RECEIVER_DEVICE = (): HIDDevice =>
 test("DEVICE_DRIVERS lists one branded entry per supported protocol", () => {
   assert.deepEqual(
     DEVICE_DRIVERS.map((driver) => driver.brand),
-    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Arbiter Studio"],
+    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Keychron", "Arbiter Studio"],
   );
 });
 
@@ -86,7 +96,16 @@ test("createSupportedClient returns the matching driver client", () => {
   assert.ok(createSupportedClient(LOGITECH_DEVICE()) instanceof LogitechKeyboardHidClient);
   assert.ok(createSupportedClient(LOGITECH_RECEIVER_DEVICE()) instanceof LogitechKeyboardHidClient);
   assert.ok(createSupportedClient(STEELSERIES_DEVICE()) instanceof SteelSeriesKeyboardHidClient);
+  assert.ok(createSupportedClient(KEYCHRON_DEVICE()) instanceof KeychronHidClient);
   assert.ok(createSupportedClient(ARBITER_DEVICE()) instanceof ArbiterKeyboardHidClient);
+});
+
+test("Keychron claims only catalogued HE boards on the raw-HID collection", () => {
+  assert.equal(deviceBrand(createSupportedClient(KEYCHRON_DEVICE())!), "Keychron");
+  assert.equal(createSupportedClient(KEYCHRON_DEVICE({ productId: 0x0001 })), null);
+  assert.equal(createSupportedClient(KEYCHRON_DEVICE({ collections: [collection(0xff60, 0x62)] })), null);
+  assert.equal(KEYCHRON_HID_FILTERS.length, KEYCHRON_HE_PRODUCT_IDS.length);
+  assert.ok(KEYCHRON_HID_FILTERS.every((filter) => filter.vendorId === VENDOR_ID.keychron));
 });
 
 test("createSupportedClient returns null for a device no driver claims", () => {
@@ -190,6 +209,7 @@ test("SUPPORTED_HID_FILTERS concatenates the vendor filter sets with no duplicat
     ...RAZER_HID_FILTERS,
     ...LOGITECH_HID_FILTERS,
     ...STEELSERIES_HID_FILTERS,
+    ...KEYCHRON_HID_FILTERS,
     ...ARBITER_HID_FILTERS,
   ]);
   const seen = new Set(SUPPORTED_HID_FILTERS.map((f) => `${f.vendorId}:${f.productId}:${f.usagePage}:${f.usage}`));

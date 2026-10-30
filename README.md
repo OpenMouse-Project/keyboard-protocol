@@ -46,6 +46,7 @@ filters, the driver registry, and shared status types live under
 | Razer | `@openmouse/keyboard-protocol/razer` |
 | Logitech | `@openmouse/keyboard-protocol/logitech` |
 | SteelSeries | `@openmouse/keyboard-protocol/steelseries` |
+| Keychron (Hall-effect) | `@openmouse/keyboard-protocol/keychron` |
 | Arbiter Studio | `@openmouse/keyboard-protocol/arbiter` |
 
 Kochi Hummingbird 68 (`1CA2:0901`) supports reading and changing Windows/Mac
