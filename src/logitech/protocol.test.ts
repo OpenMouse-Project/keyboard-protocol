@@ -12,6 +12,14 @@ import {
   decodeLogitechBattery,
   decodeLogitechBrightness,
   decodeLogitechBrightnessInfo,
+  decodeLogitechAnalogKeyTagRows,
+  encodeLogitechAnalogKeyTagRows,
+  encodeLogitechTagStartRead,
+  encodeLogitechTagStartWrite,
+  encodeLogitechTagWriteFragment,
+  patchLogitechAnalogKeyTagRow,
+  LOGITECH_ANALOG_ACTUATION_TAG_ID,
+  LOGITECH_ANALOG_KEYS_TAG_ID,
   decodeLogitechDeviceInformation,
   decodeLogitechLegacyLightingInfo,
   decodeLogitechLegacyZoneInfo,
@@ -118,6 +126,29 @@ test("brightness info and value decode", () => {
   assert.deepEqual(info, { min: 0, max: 1000, steps: 100, illumination: true });
   assert.equal(decodeLogitechBrightness(bytes([0x01, 0xf4])), 500);
   assert.equal(decodeLogitechBrightness(bytes([0x01])), null);
+});
+
+test("G HUB analog-key tag body stores an 8-bit control index and BE u16 value", () => {
+  const encoded = encodeLogitechAnalogKeyTagRows([{ controlIndex: 0x1f, value: 0x1234 }, { controlIndex: 0x20, value: 0xabcd }]);
+  assert.deepEqual([...encoded], [0x1f, 0x12, 0x34, 0x20, 0xab, 0xcd]);
+  assert.deepEqual(decodeLogitechAnalogKeyTagRows(encoded), [{ controlIndex: 0x1f, value: 0x1234 }, { controlIndex: 0x20, value: 0xabcd }]);
+  assert.equal(decodeLogitechAnalogKeyTagRows(bytes([0x1f, 0x12])), null);
+  assert.throws(() => encodeLogitechAnalogKeyTagRows([{ controlIndex: 256, value: 1 }]), RangeError);
+});
+
+test("G HUB modular profile tag requests use BE IDs, sizes and 15-byte fragments", () => {
+  assert.equal(LOGITECH_ANALOG_KEYS_TAG_ID, 0x1b08);
+  assert.deepEqual([...encodeLogitechTagStartRead(0, LOGITECH_ANALOG_ACTUATION_TAG_ID, [7])], [0, 1, 0x23, 7]);
+  assert.deepEqual([...encodeLogitechTagStartWrite(LOGITECH_ANALOG_ACTUATION_TAG_ID, 0x1234, [2])], [1, 0x23, 0x12, 0x34, 2]);
+  assert.deepEqual([...encodeLogitechTagWriteFragment(3, bytes([1, 2]))], [3, 1, 2, ...new Array(13).fill(0)]);
+  assert.throws(() => encodeLogitechTagWriteFragment(0, bytes(new Array(16).fill(1))), RangeError);
+});
+
+test("raw Logitech per-key actuation edits retain other tag rows", () => {
+  const original = bytes([0x1f, 0, 10, 0x20, 0, 20]);
+  assert.deepEqual([...patchLogitechAnalogKeyTagRow(original, 0x1f, 30)], [0x1f, 0, 30, 0x20, 0, 20]);
+  assert.deepEqual([...patchLogitechAnalogKeyTagRow(original, 0x21, 40)], [0x1f, 0, 10, 0x20, 0, 20, 0x21, 0, 40]);
+  assert.throws(() => patchLogitechAnalogKeyTagRow(bytes([1, 0, 1, 1, 0, 2]), 1, 3), /Duplicate/);
 });
 
 test("0x8070 info, zone and zone-local effect replies decode capabilities and BE fields", () => {

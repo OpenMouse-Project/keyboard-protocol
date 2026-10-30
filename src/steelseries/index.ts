@@ -14,6 +14,10 @@ export const STEELSERIES_VENDOR_ID = 0x1038;
 export const STEELSERIES_CONFIG_USAGE_PAGE = 0xffc0;
 export const STEELSERIES_CONFIG_USAGE = 0x0001;
 export const STEELSERIES_FEATURE_DATA_LENGTH = 644;
+/** Wireless packet `0x61` is 643 bytes on the wire including the report ID (OpenRGB). */
+export const STEELSERIES_WIRELESS_LIGHTING_DATA_LENGTH = 642;
+/** Data bytes of the `0x4B` wireless initialization feature report (64 plus the report ID). */
+export const STEELSERIES_INIT_DATA_LENGTH = 64;
 export const STEELSERIES_OUTPUT_DATA_LENGTH = 64;
 
 export interface SteelSeriesKeyboardProduct {
@@ -27,6 +31,8 @@ export interface SteelSeriesKeyboardProduct {
 export const STEELSERIES_KEYBOARD_PRODUCTS: ReadonlyMap<number, SteelSeriesKeyboardProduct> = new Map([
   [0x1628, { name: "Apex Pro TKL (2023)", profileSlots: 5, verified: false }],
   [0x1642, { name: "Apex Pro TKL Gen 3", profileSlots: 5, verified: false }],
+  [0x1630, { name: "Apex Pro TKL Wireless (2023)", profileSlots: 0, verified: false }],
+  [0x1632, { name: "Apex Pro TKL Wireless (2023, USB)", profileSlots: 0, verified: false }],
 ]);
 
 export const STEELSERIES_KEYBOARD_PRODUCT_IDS: readonly number[] = [...STEELSERIES_KEYBOARD_PRODUCTS.keys()];
@@ -79,6 +85,20 @@ export type SteelSeriesHallLayer = 0x00 | 0x02;
 /** The GG TKL-2022 command definition is specific to USB PID 0x1628. */
 export const STEELSERIES_APEX_PRO_2023_PRODUCT_ID = 0x1628;
 export const STEELSERIES_OLED_BITMAP_LENGTH = 640;
+export const STEELSERIES_OLED_WIDTH = 128;
+export const STEELSERIES_OLED_HEIGHT = 40;
+
+/** Pack 128×40 live OLED pixels, row-major with the leftmost pixel in bit 7. */
+export function packSteelseriesOledPixels(pixels: Uint8Array): Uint8Array {
+  if (pixels.length !== STEELSERIES_OLED_WIDTH * STEELSERIES_OLED_HEIGHT) {
+    throw new RangeError("Apex Pro TKL OLED requires exactly 128×40 pixels.");
+  }
+  const bitmap = new Uint8Array(STEELSERIES_OLED_BITMAP_LENGTH);
+  for (let index = 0; index < pixels.length; index++) {
+    if (pixels[index]) bitmap[index >> 3] = (bitmap[index >> 3] ?? 0) | (0x80 >> (index & 7));
+  }
+  return bitmap;
+}
 export const STEELSERIES_RAPID_TAP_PAIR_COUNT = 10;
 
 export interface SteelSeriesRapidTapPair {
@@ -195,9 +215,12 @@ export function decodeSteelseriesProfile(blob: Uint8Array, slot = 0): SteelSerie
     oled, deviceSchema };
 }
 
-function featureFrame(body: readonly number[]): Uint8Array<ArrayBuffer> {
-  if (body.length > STEELSERIES_FEATURE_DATA_LENGTH) throw new RangeError("SteelSeries feature frame is too large.");
-  const frame = new Uint8Array(STEELSERIES_FEATURE_DATA_LENGTH);
+function featureFrame(
+  body: readonly number[],
+  dataLength: number = STEELSERIES_FEATURE_DATA_LENGTH,
+): Uint8Array<ArrayBuffer> {
+  if (body.length > dataLength) throw new RangeError("SteelSeries feature frame is too large.");
+  const frame = new Uint8Array(dataLength);
   frame.set(body);
   return frame;
 }
@@ -367,8 +390,8 @@ export const STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS: readonly number[] = [
   0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
   0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
   0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
-  0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45,
-  0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52,
+  0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45,
+  0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x64,
   0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe7, 0xf0, 0x28, 0x31, 0xe6,
 ];
 
@@ -377,6 +400,7 @@ export type SteelSeriesRgb = readonly [number, number, number];
 /** `00 40 count {hid,r,g,b}*count` feature report: direct per-key lighting. */
 export function encodeSteelseriesLighting(
   colors: ReadonlyMap<number, SteelSeriesRgb>,
+  packetId: 0x40 | 0x61 = 0x40,
 ): Uint8Array<ArrayBuffer> {
   const entries: number[] = [];
   for (const usage of STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS) {
@@ -386,7 +410,15 @@ export function encodeSteelseriesLighting(
     }
     entries.push(usage, color[0], color[1], color[2]);
   }
-  return featureFrame([0x40, STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.length, ...entries]);
+  return featureFrame(
+    [packetId, STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.length, ...entries],
+    packetId === 0x61 ? STEELSERIES_WIRELESS_LIGHTING_DATA_LENGTH : STEELSERIES_FEATURE_DATA_LENGTH,
+  );
+}
+
+/** `00 4B` feature report OpenRGB sends once before wireless `0x61` direct-lighting frames. */
+export function encodeSteelseriesInit(): Uint8Array<ArrayBuffer> {
+  return featureFrame([0x4b], STEELSERIES_INIT_DATA_LENGTH);
 }
 
 /** `00 41` output report: hand lighting back to the on-board profile. */

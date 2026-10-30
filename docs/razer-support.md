@@ -17,6 +17,10 @@ what has been exercised on hardware.
   class `0x02`/id `0x12` on analog boards and class `0x02`/id `0x0D` on
   non-analog boards, with the argument order and the published Fn-binding
   capture `02 12 01 7f 00 00 00 0c 01 01 00 00 00 00`.
+- [EasyRazer's Huntsman V3 protocol notes](https://github.com/janeblower/easyrazer/blob/master/docs/en/devices/huntsman-v3-analog/protocol.md)
+  document `02:1A`/`02:9A` per-key rapid trigger, the big-endian u16 scale
+  (1638 units per 0.1 mm), and profile 0 as RAM-only. Its V3 Pro Mini path has
+  hardware testing; the other V3 variants remain unverified here.
 - G HUB's public keyboard catalog was used only as a cross-check for model
   names; it does not define the Razer wire format.
 - [OpenRazer `razerchromacommon.c`](https://github.com/openrazer/openrazer/blob/master/driver/razerchromacommon.c)
@@ -69,20 +73,30 @@ transaction ids; a single keyboard may require different ids for each.
 | Analog key binding | `0x02/0x12`, read `0x02/0x92` | Onboard slot, Razer layout key, Fn-layer flag, raw actuation/release thresholds, binding type and parameters; the get direction reads the record back. |
 | Custom RGB matrix rows | `0x0F/0x03` (extended, 71 bytes) or `0x03/0x0B` (standard, 70 bytes); select mode with `0x0F/0x02` or `0x03/0x0A` | `setCustomMatrixRow(row, startColumn, [[r,g,b], …])` writes an inclusive 1–22-column physical row segment; `activateCustomMatrix()` separately selects custom mode. Both are write-only. No USB-usage-to-matrix-coordinate mapping is claimed. |
 | Game-mode LED | `0x03/0x00` write, `0x03/0x80` read, `storage 08 state` | `readGameModeLed()` reads byte 2; `setGameModeLed(boolean)` writes then checks byte 2 on readback. This is the game-mode LED state command, not a portable guarantee that the OS disables particular keys. |
+| V3 firmware rapid trigger | `0x02/0x1A` write, `0x02/0x9A` read | `setRapidTrigger(key, enabled, upMm, downMm)` writes one firmware key ID in RAM profile 0 and verifies the eight returned bytes. The per-key encoder rejects `0xFF`. `setRapidTriggerAllKeys(enabled)` writes the all-keys ID `0xFF` with zero distances and verifies the reply; it is an override, not a reversible profile switch, because it replaces keys' individual flags and toggling it back does not restore them. Only V3 Pro family PIDs are enabled. |
 
 The status object exposes `razer.pollingStyle` and `razer.brightnessStyle` so a
 caller can see which command family the model answered. Binding reads use the
 get direction; effect writes return after a successful status because no effect
 getter is established.
 
-The two new features are intentionally restricted to this evidence-backed
-subset of the catalog (all `verified: false`):
+Custom matrix mode and row writes are enabled only where both command variants
+are listed in OpenRazer's PID switches (all `verified: false`):
 
 | PID / model | Custom mode + row | Game-mode LED |
 | --- | --- | --- |
 | `0237` BlackWidow Essential | Standard, transaction `FF` | VARSTORE, transaction `FF` |
 | `026B` Huntsman V2 Tenkeyless; `026C` Huntsman V2 | Extended, transaction `1F` | NOSTORE, transaction `1F` |
 | `02A6` Huntsman V3 Pro; `02A7` Huntsman V3 Pro TKL; `02B0` Huntsman V3 Pro Mini; `02CF` Huntsman V3 Pro 8KHz | Extended, transaction `1F` | VARSTORE, transaction `FF` |
+
+Additional custom-matrix PIDs now follow the matching OpenRazer mode/row
+branches: `0226`, `0227`, `0228`, `022A`, `0241`, `0243`, `024E`, `0257`,
+`025A`, `025C`, `025D`, `025E`, `0266`, `0282`, `028F`, `0290`, `0292`,
+`0293`, `0294`, `0295`, `0296`, `0298`, `02A1`, `02A2`, `02A3`, `02B9`,
+`02BA`, `02D5`, `02D7`, and `0A24`. The V3 mode command uses transaction
+`3F` but its row command uses `1F`. Other added variants use `3F`, `1F`, or
+`9F` for both commands as selected by the PID map. Game-mode LED remains
+restricted to the table above.
 
 The row encoder refuses more than 22 triplets so RGB data fits the declared
 70/71-byte report, and refuses coordinates outside 0–255. Send all desired

@@ -27,6 +27,8 @@ class FakeLogitechKeyboard {
   rapidTrigger = false;
   keyPriority = true;
   brightness = 500;
+  illuminationEnabled = true;
+  supportsIllumination = true;
   controlIds = [0x00e4, 0x00e5];
   controlMap = new Map([[0x00e4, 0x00e4], [0x00e5, 0x00e5]]);
   brightnessMax = 1000;
@@ -156,14 +158,21 @@ class FakeLogitechKeyboard {
         return response(6, 0, [0, 0, page === 0 ? 0b00001110 : 0, ...new Array(11).fill(0)], this.deviceIndex);
       }
       if (functionId === 6) return response(6, 6, [...params], this.deviceIndex);
+      // fn 1 only acknowledges the setter: no zone echo in the reply.
+      if (functionId === 1) return response(6, 1, [], this.deviceIndex);
       if (functionId === 7) return response(6, 7, [], this.deviceIndex);
     }
     if (featureIndex === 4) {
-      if (functionId === 0) return response(4, 0, [(this.brightnessMax >> 8) & 0xff, this.brightnessMax & 0xff, 0x64, 0x04, 0x00, 0x00, 0x00], this.deviceIndex);
+      if (functionId === 0) return response(4, 0, [(this.brightnessMax >> 8) & 0xff, this.brightnessMax & 0xff, 0x64, this.supportsIllumination ? 0x04 : 0x00, 0x00, 0x00, 0x00], this.deviceIndex);
       if (functionId === 1) return response(4, 1, [(this.brightness >> 8) & 0xff, this.brightness & 0xff], this.deviceIndex);
       if (functionId === 2) {
         this.brightness = ((params[0] ?? 0) << 8) | (params[1] ?? 0);
         return response(4, 2, [], this.deviceIndex);
+      }
+      if (functionId === 3) return response(4, 3, [this.illuminationEnabled ? 1 : 0], this.deviceIndex);
+      if (functionId === 4) {
+        this.illuminationEnabled = (params[0] ?? 0) !== 0;
+        return response(4, 4, [], this.deviceIndex);
       }
     }
     // HID++ 2.0 error frame echoes the failing request: [devIx, 0xff, reqFeatIx, reqFn|swId, errCode].
@@ -230,6 +239,37 @@ test("setBrightness writes big-endian and verifies the read-back", async () => {
   assert.equal(await client.setBrightness(750), 750);
   const write = device.writes.find((entry) => entry.featureIndex === 4 && entry.functionId === 2);
   assert.deepEqual(write?.params.slice(0, 2), [0x02, 0xee]);
+  await client.close();
+});
+
+test("illumination toggles independently of brightness when advertised", async () => {
+  const device = new FakeLogitechKeyboard();
+  const client = new LogitechKeyboardHidClient(device as unknown as HIDDevice);
+  assert.equal(await client.setIllumination(false), false);
+  assert.equal(device.brightness, 500);
+  assert.equal(device.illuminationEnabled, false);
+  assert.deepEqual(device.writes.find((entry) => entry.featureIndex === 4 && entry.functionId === 4)?.params.slice(0, 3), [0, 0, 0]);
+  assert.equal((await client.readStatus()).logitech?.brightness?.illuminationEnabled, false);
+  await client.close();
+});
+
+test("illumination writes require the advertised capability", async () => {
+  const device = new FakeLogitechKeyboard();
+  device.supportsIllumination = false;
+  const client = new LogitechKeyboardHidClient(device as unknown as HIDDevice);
+  await assert.rejects(client.setIllumination(false), /does not advertise illumination control/);
+  assert.equal(device.writes.some((entry) => entry.featureIndex === 4 && entry.functionId === 4), false);
+  await client.close();
+});
+
+test("0x8081 stages separate advertised zone colours and commits once with a payload-free ack", async () => {
+  const device = new FakeLogitechKeyboard();
+  const client = new LogitechKeyboardHidClient(device as unknown as HIDDevice);
+  await client.setZoneColors([{ zone: 1, red: 255, green: 0, blue: 0 }, { zone: 2, red: 0, green: 0, blue: 255 }]);
+  const stage = device.writes.find((entry) => entry.featureIndex === 6 && entry.functionId === 1);
+  assert.deepEqual(stage?.params.slice(0, 8), [1, 255, 0, 0, 2, 0, 0, 255]);
+  assert.equal(device.writes.filter((entry) => entry.featureIndex === 6 && entry.functionId === 7).length, 1);
+  await assert.rejects(client.setZoneColors([{ zone: 9, red: 1, green: 2, blue: 3 }]), /does not advertise/);
   await client.close();
 });
 
