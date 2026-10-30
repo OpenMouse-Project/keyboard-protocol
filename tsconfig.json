@@ -46,6 +46,9 @@
       ],
       "@openmouse/keyboard-protocol/steelseries": [
         "./src/steelseries/index.ts"
+      ],
+      "@openmouse/keyboard-protocol/keychron": [
+        "./src/keychron/index.ts"
       ]
     }
   },

@@ -4,6 +4,7 @@ import { KochiHidClient } from "./kochi/hid.ts";
 import { RazerKeyboardHidClient } from "./razer/hid.ts";
 import { LogitechKeyboardHidClient } from "./logitech/hid.ts";
 import { SteelSeriesKeyboardHidClient } from "./steelseries/hid.ts";
+import { KeychronHidClient } from "./keychron/hid.ts";
 
 export type SupportedClient =
   | WootingHidClient
@@ -11,7 +12,8 @@ export type SupportedClient =
   | KochiHidClient
   | RazerKeyboardHidClient
   | LogitechKeyboardHidClient
-  | SteelSeriesKeyboardHidClient;
+  | SteelSeriesKeyboardHidClient
+  | KeychronHidClient;
 
 export interface DeviceDriver {
   brand: string;
@@ -27,6 +29,7 @@ export const DEVICE_DRIVERS: readonly DeviceDriver[] = [
   { brand: "Razer", supports: (device) => RazerKeyboardHidClient.isSupported(device), create: (device) => new RazerKeyboardHidClient(device), score: () => 6 },
   { brand: "Logitech", supports: (device) => LogitechKeyboardHidClient.isSupported(device), create: (device) => new LogitechKeyboardHidClient(device), score: () => 6 },
   { brand: "SteelSeries", supports: (device) => SteelSeriesKeyboardHidClient.isSupported(device), create: (device) => new SteelSeriesKeyboardHidClient(device), score: () => 6 },
+  { brand: "Keychron", supports: (device) => KeychronHidClient.isSupported(device), create: (device) => new KeychronHidClient(device), score: () => 6 },
 ];
 
 function driverFor(device: HIDDevice): DeviceDriver | undefined {

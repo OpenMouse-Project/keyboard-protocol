@@ -25,6 +25,12 @@ import {
   LOGITECH_VENDOR_ID,
 } from "@openmouse/keyboard-protocol/logitech";
 import {
+  KEYCHRON_CONFIG_USAGE,
+  KEYCHRON_CONFIG_USAGE_PAGE,
+  KEYCHRON_HE_PRODUCT_IDS,
+  KEYCHRON_VENDOR_ID,
+} from "@openmouse/keyboard-protocol/keychron";
+import {
   STEELSERIES_CONFIG_USAGE,
   STEELSERIES_CONFIG_USAGE_PAGE,
   STEELSERIES_KEYBOARD_PRODUCT_IDS,
@@ -39,6 +45,7 @@ export const VENDOR_ID = {
   razer: RAZER_VENDOR_ID,
   logitech: LOGITECH_VENDOR_ID,
   steelseries: STEELSERIES_VENDOR_ID,
+  keychron: KEYCHRON_VENDOR_ID,
 } as const;
 
 // Match the two command-capable collections rather than enumerating every
@@ -105,6 +112,18 @@ export const STEELSERIES_HID_FILTERS: HIDDeviceFilter[] = STEELSERIES_KEYBOARD_P
   usage: STEELSERIES_CONFIG_USAGE,
 }));
 
+/**
+ * Keychron Hall-effect boards expose the HE command group on the VIA raw-HID
+ * collection (0xFF60:0x61). Each catalogued HE product id is filtered
+ * explicitly so a non-HE Keychron keyboard never reaches the picker.
+ */
+export const KEYCHRON_HID_FILTERS: HIDDeviceFilter[] = KEYCHRON_HE_PRODUCT_IDS.map((productId) => ({
+  vendorId: KEYCHRON_VENDOR_ID,
+  productId,
+  usagePage: KEYCHRON_CONFIG_USAGE_PAGE,
+  usage: KEYCHRON_CONFIG_USAGE,
+}));
+
 export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...KOCHI_HID_FILTERS,
   ...WOOTING_HID_FILTERS,
@@ -112,4 +131,5 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...RAZER_HID_FILTERS,
   ...LOGITECH_HID_FILTERS,
   ...STEELSERIES_HID_FILTERS,
+  ...KEYCHRON_HID_FILTERS,
 ];

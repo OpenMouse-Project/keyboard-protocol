@@ -46,6 +46,7 @@ filters, the driver registry, and shared status types live under
 | Razer | `@openmouse/keyboard-protocol/razer` |
 | Logitech | `@openmouse/keyboard-protocol/logitech` |
 | SteelSeries | `@openmouse/keyboard-protocol/steelseries` |
+| Keychron (Hall-effect) | `@openmouse/keyboard-protocol/keychron` |
 
 Kochi Hummingbird 68 (`1CA2:0901`) supports reading and changing Windows/Mac
 mode on its `FFA0:1` USB configuration collection. Both directions and mode

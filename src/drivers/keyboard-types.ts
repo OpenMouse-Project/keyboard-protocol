@@ -36,6 +36,7 @@ import type {
 import type { RazerKeyboardState } from "@openmouse/keyboard-protocol/razer";
 import type { LogitechKeyboardState } from "@openmouse/keyboard-protocol/logitech";
 import type { SteelSeriesApexProfile } from "@openmouse/keyboard-protocol/steelseries";
+import type { KeychronHeFeatures } from "@openmouse/keyboard-protocol/keychron";
 
 export interface KeyboardUiHints {
   /** Stable driver id, e.g. "wooting". */
@@ -169,6 +170,23 @@ export interface WuqueStatus {
   macros?: WuqueMacroState | null;
 }
 
+/** Keychron Hall-effect board identity and the layout the profile buffer follows. */
+export interface KeychronState {
+  productId: number;
+  /** Hall-effect command version the board reports (1-5). */
+  heVersion: number;
+  features: KeychronHeFeatures;
+  /** Millimetres per travel step in profile values. */
+  unit: number;
+  profileSize: number;
+  dksCount: number | null;
+  snapTapCount: number | null;
+  rows: number;
+  cols: number;
+  /** Travel range from Launcher's board definition, when it declares one. */
+  travel: { min?: number; max?: number; deadzone?: number } | null;
+}
+
 export interface KeyboardStatus {
   /** HB68 Windows/Mac mode, verified through both mode queries. */
   kochi?: { systemMode: import("../kochi/index.js").KochiSystemMode };
@@ -218,6 +236,8 @@ export interface KeyboardStatus {
   razer?: RazerKeyboardState | null;
   /** Logitech HID++ keyboard state. */
   logitech?: LogitechKeyboardState | null;
+  /** Keychron Hall-effect board state (command version, units, profile layout). */
+  keychron?: KeychronState | null;
   /** SteelSeries Apex Pro on-board analog profile (persisted snapshot). */
   steelseries?: { productId: number; profile: SteelSeriesApexProfile | null; verified: boolean } | null;
 }
