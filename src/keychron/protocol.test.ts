@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  KEYCHRON_HE_COMMAND, KEYCHRON_HE_PRODUCTS, KEYCHRON_HE_PRODUCT_IDS, KEYCHRON_HE_SUBCOMMAND,
+  KEYCHRON_HE_COMMAND, KEYCHRON_KEY_MODE, KEYCHRON_WORK_MODE, keychronKeyBitmap, keychronKeyTarget, keychronProfileNameBytes, KEYCHRON_HE_PRODUCTS, KEYCHRON_HE_PRODUCT_IDS, KEYCHRON_HE_SUBCOMMAND,
   decodeKeychronAxisType, decodeKeychronCalibrationState, decodeKeychronCurve, decodeKeychronHeVersion,
   decodeKeychronKeySlot, decodeKeychronProfileBuffer, decodeKeychronProfileName, decodeKeychronProfilesInfo,
   decodeKeychronRealtimeTravel, joinKeychronProfile, keychronHeAcknowledged, keychronHeFrames,
@@ -154,4 +154,40 @@ test("the HE catalog is keyed by 16-bit product ids", () => {
     const product = KEYCHRON_HE_PRODUCTS[id]!;
     assert.ok(product.rows > 0 && product.cols > 0 && product.name.length > 0);
   }
+});
+
+test("work and key modes match Launcher's enums", () => {
+  assert.deepEqual(KEYCHRON_WORK_MODE, { global: 0, static: 1, quickTrigger: 2 });
+  assert.deepEqual(KEYCHRON_KEY_MODE, { perKey: 0, allKeys: 1 });
+});
+
+test("the key bitmap is three bytes per row, low bit first", () => {
+  const bitmap = keychronKeyBitmap([{ row: 0, col: 0 }, { row: 1, col: 9 }, { row: 2, col: 23 }]);
+  assert.equal(bitmap.length, 24);
+  assert.equal(bitmap[0], 0b1);
+  assert.equal(bitmap[3 + 1], 0b10);
+  assert.equal(bitmap[6 + 2], 0b1000_0000);
+  assert.equal(bitmap.reduce((sum, byte) => sum + byte, 0), 1 + 2 + 128);
+  assert.throws(() => keychronKeyBitmap([{ row: 0, col: 24 }]), RangeError);
+  assert.throws(() => keychronKeyBitmap([{ row: 8, col: 0 }]), RangeError);
+});
+
+test("key targets are all-keys by default and per-key with a bitmap", () => {
+  assert.deepEqual(keychronKeyTarget(), { keyMode: 1 });
+  const target = keychronKeyTarget([{ row: 0, col: 1 }]);
+  assert.equal(target.keyMode, 0);
+  assert.equal(target.buffer?.[0], 0b10);
+  assert.throws(() => keychronKeyTarget([]), RangeError);
+});
+
+test("profile names are trimmed big-endian UTF-16 with a byte length", () => {
+  const { chars, length } = keychronProfileNameBytes("  Hi\u00e9 ");
+  assert.equal(length, 6);
+  assert.deepEqual(chars.slice(0, 7), [0, 0x48, 0, 0x69, 0, 0xe9, 0]);
+  assert.equal(chars.length, 28);
+  assert.throws(() => keychronProfileNameBytes("   "), RangeError);
+  assert.throws(() => keychronProfileNameBytes("x".repeat(15)), RangeError);
+  assert.throws(() => keychronProfileNameBytes("\u{1F600}"), RangeError);
+  const frame = keychronHeFrames.setProfileName(2, chars, length);
+  assert.deepEqual([...frame.slice(0, 8)], [0xa9, 0x13, 2, 6, 0, 0x48, 0, 0x69]);
 });

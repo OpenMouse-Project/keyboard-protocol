@@ -5,7 +5,7 @@ import {
   decodeKeychronCurve, decodeKeychronHeVersion, decodeKeychronProfileBuffer, decodeKeychronProfileName,
   decodeKeychronProfilesInfo, decodeKeychronRealtimeTravel, isKeychronHeReply, isKeychronHeVersion,
   joinKeychronProfile, keychronHeAcknowledged, keychronHeFrames, keychronNameWindow,
-  keychronProfileChunk, keychronProfileReadPlan,
+  keychronProfileChunk, keychronProfileNameBytes, keychronProfileReadPlan,
   type KeychronAxisType, type KeychronCalibrationState, type KeychronCurve, type KeychronHeSubcommand,
   type KeychronHeVersion, type KeychronHeVersionInfo, type KeychronProfileBuffer, type KeychronProfilesInfo,
   type KeychronTravelSetting,
@@ -217,6 +217,18 @@ export class KeychronHidClient {
       const info = await this.profilesInfo();
       const reply = await this.call(keychronHeFrames.saveProfile(info.current), KEYCHRON_HE_SUBCOMMAND.saveProfileBuffer);
       if (!keychronHeAcknowledged(reply, KEYCHRON_HE_SUBCOMMAND.saveProfileBuffer)) throw new Error("The keyboard did not save the profile.");
+    });
+  }
+
+  /** Rename a profile slot, then save, as Launcher does. */
+  renameProfile(slot: number, name: string): Promise<void> {
+    return this.serialized(async () => {
+      const { chars, length } = keychronProfileNameBytes(name);
+      const info = await this.profilesInfo();
+      if (!Number.isInteger(slot) || slot < 0 || slot >= info.total) throw new RangeError("Profile slot out of range.");
+      await this.call(keychronHeFrames.setProfileName(slot, chars, length), KEYCHRON_HE_SUBCOMMAND.setProfileName);
+      const saved = await this.call(keychronHeFrames.saveProfile(info.current), KEYCHRON_HE_SUBCOMMAND.saveProfileBuffer);
+      if (!keychronHeAcknowledged(saved, KEYCHRON_HE_SUBCOMMAND.saveProfileBuffer)) throw new Error("The keyboard did not save the profile.");
     });
   }
 

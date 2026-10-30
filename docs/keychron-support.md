@@ -34,16 +34,23 @@ been exercised, and note the gaps below before relying on a value.
 | --- | --- |
 | Identity | version and capability bits, profile count/size/active slot, profile names |
 | Travel | actuation, rapid-trigger press/release, global and per-key (`setTravel`) |
-| Profiles | select, read and decode the whole buffer, save, clear, rename |
+| Profiles | select, read and decode the whole buffer, save, clear, rename (28-byte UTF-16BE name, length byte `2 * chars`, then save) |
 | Advanced keys | DKS decode and write/remove, snap-tap decode and write, turbo/DKR/toggle slot decode |
 | Response | curve read/write, live per-key travel |
 | Maintenance | calibration start/stop/state, switch axis type read/write, single-key reset, joystick mode |
 
+## Write parameters (from Launcher's call sites)
+
+- `workMode`: Global 0, Static 1, QuickTrigger (rapid trigger) 2.
+- `keyMode`: 1 applies to every key; 0 applies to the keys set in a 24-byte
+  bitmap (byte `3 * row + floor(col / 8)`, bit `col % 8`).
+- Launcher follows every write with `saveProfile`, which the driver leaves to
+  the caller.
+
 ## Known gaps
 
-- `workMode` and `keyMode` are sent as the raw bytes Launcher uses. Their
-  meanings are only partly known (`keyMode` 0 means "write a per-key buffer"),
-  so the driver exposes them unnamed.
+- Travel range: Launcher's displayed range is `min` up to `max + deadzone`
+  (`extra.he.distance`); the deadzone extends the top, it is not a lower bound.
 - The profile buffer layout past the snap-tap region, the v5 DKS/snap-tap
   write offsets beyond what Launcher sets, and turbo/DKR write commands are not
   covered.

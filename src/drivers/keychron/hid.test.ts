@@ -56,6 +56,7 @@ class FakeBoard {
         }
         break;
       }
+      case SUB.setProfileName: break;
       case SUB.setTravel: case SUB.saveProfileBuffer: reply[2] = this.nak ? 1 : 0; break;
       case SUB.getRealtimeTravel: reply.set([request[2]!, request[3]!, 33], 3); break;
       default: break;
@@ -113,6 +114,16 @@ test("setTravel targets the active profile and requires an acknowledgement", asy
   assert.equal(board.sent.at(-1)![1], SUB.saveProfileBuffer);
   board.nak = true;
   await assert.rejects(() => keyboard.saveProfile(), /did not save/);
+});
+
+test("renameProfile writes the name then saves", async () => {
+  const board = new FakeBoard();
+  await client(board).renameProfile(2, "Aim");
+  const rename = board.sent.find((frame) => frame[1] === SUB.setProfileName)!;
+  assert.deepEqual([...rename.slice(2, 8)], [2, 6, 0, 0x41, 0, 0x69]);
+  assert.equal(board.sent.at(-1)![1], SUB.saveProfileBuffer);
+  await assert.rejects(() => client(board).renameProfile(7, "x"), RangeError);
+  await assert.rejects(() => client(board).renameProfile(0, ""), RangeError);
 });
 
 test("live travel matches the echoed key", async () => {

@@ -61,6 +61,56 @@ export type KeychronHeSubcommand = (typeof KEYCHRON_HE_SUBCOMMAND)[keyof typeof 
 /** `AMC_CALIBRATE` argument: start the calibration sweep / stop it. */
 export const KEYCHRON_CALIBRATE = { start: 2, stop: 4 } as const;
 
+/**
+ * `workMode` byte of a travel write. Launcher's `hw` enum: Global 0, Static 1,
+ * QuickTrigger 2 (rapid trigger).
+ */
+export const KEYCHRON_WORK_MODE = { global: 0, static: 1, quickTrigger: 2 } as const;
+export type KeychronWorkMode = (typeof KEYCHRON_WORK_MODE)[keyof typeof KEYCHRON_WORK_MODE];
+
+/** `keyMode` byte of a travel write: 1 applies to every key, 0 to the keys set in a bitmap. */
+export const KEYCHRON_KEY_MODE = { perKey: 0, allKeys: 1 } as const;
+/** Per-key bitmap: three bytes per row, eight columns per byte, low bit first. */
+export const KEYCHRON_KEY_BITMAP_SIZE = 24;
+/** Profile names are 28 bytes: up to 14 UTF-16BE units, zero padded. */
+export const KEYCHRON_PROFILE_NAME_BYTES = 28;
+
+export interface KeychronKeyPosition { row: number; col: number }
+
+/** Bitmap of `keys` in Launcher's layout: byte `3 * row + floor(col / 8)`, bit `col % 8`. */
+export function keychronKeyBitmap(keys: readonly KeychronKeyPosition[]): Uint8Array<ArrayBuffer> {
+  const bitmap = new Uint8Array(KEYCHRON_KEY_BITMAP_SIZE);
+  for (const { row, col } of keys) {
+    const at = 3 * row + Math.floor(col / 8);
+    if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || col < 0 || col >= 24 || at >= bitmap.length) {
+      throw new RangeError(`Key [${row},${col}] is outside the 8x24 bitmap.`);
+    }
+    bitmap[at]! |= 1 << (col % 8);
+  }
+  return bitmap;
+}
+
+/** `keyMode` and `buffer` for a travel write: every key (no keys given) or just `keys`. */
+export function keychronKeyTarget(keys?: readonly KeychronKeyPosition[]): { keyMode: number; buffer?: number[] } {
+  if (!keys) return { keyMode: KEYCHRON_KEY_MODE.allKeys };
+  if (keys.length === 0) throw new RangeError("A per-key write needs at least one key.");
+  return { keyMode: KEYCHRON_KEY_MODE.perKey, buffer: [...keychronKeyBitmap(keys)] };
+}
+
+/** Name bytes and length for `setProfileName`: trimmed, BMP only, up to 14 characters. */
+export function keychronProfileNameBytes(name: string): { chars: number[]; length: number } {
+  const units = [...name.trim()];
+  if (units.length === 0 || units.length > 14) throw new RangeError("Profile names are 1-14 characters.");
+  const chars = new Array<number>(KEYCHRON_PROFILE_NAME_BYTES).fill(0);
+  units.forEach((unit, index) => {
+    const code = unit.codePointAt(0)!;
+    if (code > 0xffff) throw new RangeError("Profile names are limited to the Basic Multilingual Plane.");
+    chars[2 * index] = code >> 8;
+    chars[2 * index + 1] = code & U8;
+  });
+  return { chars, length: 2 * units.length };
+}
+
 export type KeychronHeVersion = 1 | 2 | 3 | 4 | 5;
 
 /** Capability bits of the `AMC_GET_VERSION` reply (byte 4, bit 0 first). */
@@ -144,7 +194,7 @@ export interface KeychronProfileBuffer {
 }
 
 export interface KeychronTravelSetting {
-  /** Raw work-mode byte Launcher sends; 0 selects the per-key buffer. */
+  /** KEYCHRON_WORK_MODE: global 0, static 1, quickTrigger 2. */
   workMode: number;
   /** Actuation, in `unit` steps. */
   press?: number;
@@ -152,7 +202,7 @@ export interface KeychronTravelSetting {
   sensitivePress?: number;
   /** Rapid-trigger release sensitivity; defaults to `sensitivePress`. */
   sensitiveRelease?: number;
-  /** 0 writes `buffer`; any other value is a global setting. */
+  /** KEYCHRON_KEY_MODE: 0 writes the keys in `buffer`, 1 applies to every key. */
   keyMode: number;
   /** Per-key bytes (only sent when `keyMode` is 0). */
   buffer?: readonly number[];
@@ -227,7 +277,7 @@ export const keychronHeFrames = {
   },
   saveProfile: (slot: number) => frame(KEYCHRON_HE_SUBCOMMAND.saveProfileBuffer, profile(slot)),
   clearProfile: (slot: number) => frame(KEYCHRON_HE_SUBCOMMAND.clearProfileBuffer, profile(slot)),
-  /** `chars` are the name's UTF-16 code units, big-endian, as the profile buffer stores them. */
+  /** Use `keychronProfileNameBytes`; Launcher follows a rename with `saveProfile`. */
   setProfileName(slot: number, chars: readonly number[], length: number) {
     return frame(KEYCHRON_HE_SUBCOMMAND.setProfileName, profile(slot), length, ...chars);
   },
