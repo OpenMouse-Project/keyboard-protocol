@@ -88,7 +88,7 @@ export class KeychronHidClient {
 
   /** Send one report and wait for the reply `accepts` recognises. */
   private async exchange(
-    request: Uint8Array<ArrayBuffer>, accepts: (frame: Uint8Array) => boolean,
+    request: Uint8Array<ArrayBuffer>, accepts: (frame: Uint8Array) => boolean, faultOnTimeout = true,
   ): Promise<Uint8Array> {
     await this.open();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -102,7 +102,9 @@ export class KeychronHidClient {
     } catch (error) {
       // Replies carry no transaction id, so a delayed one could confirm a later
       // command. Do not reuse the session after a timeout or a failed send.
-      this.faulted = true;
+      // The optional VIA reads opt out of the timeout case: their replies carry
+      // a different command id, so a late one can never satisfy an HE command.
+      if (faultOnTimeout || !(error instanceof Error && error.message.includes("did not answer"))) this.faulted = true;
       throw error;
     } finally {
       clearTimeout(timer);
@@ -225,7 +227,7 @@ export class KeychronHidClient {
   readLayerCount(): Promise<number> {
     return this.serialized(async () => {
       const count = decodeKeychronLayerCount(await this.exchange(
-        keychronViaFrames.layerCount(), (frame) => decodeKeychronLayerCount(frame) !== null,
+        keychronViaFrames.layerCount(), (frame) => decodeKeychronLayerCount(frame) !== null, false,
       ));
       if (count === null) throw new Error("The keyboard did not report its layer count.");
       return count;
@@ -235,13 +237,15 @@ export class KeychronHidClient {
   /**
    * Read one keymap layer as `keycodes[row][col]` using the standard VIA
    * dynamic-keymap read. Pair it with `keychronKeycodeLegend` to label keys.
+   * A board that ignores the read rejects with "did not answer" but the
+   * session stays usable for the Hall-effect commands.
    */
   readKeymap(layer = 0): Promise<number[][]> {
     return this.serialized(async () => {
       const { rows, cols } = this.matrix();
       const chunks: number[][] = [];
       for (const read of keychronKeymapReadPlan(layer, rows, cols)) {
-        const reply = await this.exchange(keychronViaFrames.keymapBuffer(read), (frame) => isKeychronKeymapReply(frame, read.offset));
+        const reply = await this.exchange(keychronViaFrames.keymapBuffer(read), (frame) => isKeychronKeymapReply(frame, read.offset), false);
         const codes = decodeKeychronKeymapChunk(reply, read.bytes);
         if (!codes) throw new Error("The keyboard sent a short keymap reply.");
         chunks.push(codes);

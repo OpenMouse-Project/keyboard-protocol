@@ -18,6 +18,7 @@ class FakeBoard {
   listeners = new Set<(event: HIDInputReportEvent) => void>();
   sent: Uint8Array[] = [];
   silent = false;
+  silentVia = false;
   nak = false;
   buffer = new Uint8Array(SIZE);
   version = 4;
@@ -37,6 +38,7 @@ class FakeBoard {
     this.sent.push(request.slice());
     if (this.silent) return;
     if (request[0] === 0x11 || request[0] === 0x12) {
+      if (this.silentVia) return;
       const via = new Uint8Array(32);
       via.set(request.slice(0, 4));
       if (request[0] === 0x11) via[1] = 4;
@@ -143,6 +145,16 @@ test("readKeymap reads one layer through the VIA keymap command", async () => {
   const reads = board.sent.filter((frame) => frame[0] === 0x12);
   assert.equal(reads.length, Math.ceil(rows * cols / 14));
   assert.equal(await client(board).readLayerCount(), 4);
+});
+
+test("a board that ignores the keymap read keeps its session for HE commands", async () => {
+  const board = new FakeBoard();
+  board.silentVia = true;
+  const keyboard = client(board);
+  await assert.rejects(() => keyboard.readKeymap(0), /did not answer/);
+  await assert.rejects(() => keyboard.readLayerCount(), /did not answer/);
+  assert.equal((await keyboard.readStatus()).brand, "Keychron");
+  assert.equal(await keyboard.readKeyTravel(1, 1), 33);
 });
 
 test("live travel matches the echoed key", async () => {
