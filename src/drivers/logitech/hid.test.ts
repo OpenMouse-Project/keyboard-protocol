@@ -158,7 +158,8 @@ class FakeLogitechKeyboard {
         return response(6, 0, [0, 0, page === 0 ? 0b00001110 : 0, ...new Array(11).fill(0)], this.deviceIndex);
       }
       if (functionId === 6) return response(6, 6, [...params], this.deviceIndex);
-      if (functionId === 1) return response(6, 1, [...params], this.deviceIndex);
+      // fn 1 only acknowledges the setter: no zone echo in the reply.
+      if (functionId === 1) return response(6, 1, [], this.deviceIndex);
       if (functionId === 7) return response(6, 7, [], this.deviceIndex);
     }
     if (featureIndex === 4) {
@@ -261,7 +262,7 @@ test("illumination writes require the advertised capability", async () => {
   await client.close();
 });
 
-test("0x8081 stages separate advertised zone colours and commits once", async () => {
+test("0x8081 stages separate advertised zone colours and commits once with a payload-free ack", async () => {
   const device = new FakeLogitechKeyboard();
   const client = new LogitechKeyboardHidClient(device as unknown as HIDDevice);
   await client.setZoneColors([{ zone: 1, red: 255, green: 0, blue: 0 }, { zone: 2, red: 0, green: 0, blue: 255 }]);

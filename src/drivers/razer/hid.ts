@@ -3,6 +3,7 @@ import {
   RAZER_KEYBOARD_PRODUCTS,
   RAZER_CUSTOM_MATRIX_SUPPORT,
   RAZER_GAME_MODE_LED_SUPPORT,
+  RAZER_FIRMWARE_ALL_KEYS,
   RAZER_FIRMWARE_RAPID_TRIGGER_PRODUCTS,
   RAZER_KEYBOARD_READ,
   RAZER_KEYBOARD_WRITE,
@@ -387,18 +388,22 @@ export class RazerKeyboardHidClient {
     });
   }
 
-  /** Toggle the V3 profile-wide rapid-trigger switch; firmware ID FF also affects every key. */
-  async setRapidTriggerGlobal(enabled: boolean): Promise<void> {
+  /**
+   * Overwrite rapid trigger on every key at once (firmware key ID FF). This is
+   * an all-keys override, not a reversible profile switch: per-key flags set
+   * earlier are replaced and cannot be restored by toggling it back.
+   */
+  async setRapidTriggerAllKeys(enabled: boolean): Promise<void> {
     return this.serialized(async () => {
       if (!RAZER_FIRMWARE_RAPID_TRIGGER_PRODUCTS.has(this.device.productId)) {
         throw new Error("Firmware rapid trigger is not enabled for this Razer model.");
       }
       await this.open();
       await this.exchange({ commandClass: 0x02, commandId: 0x1a, dataSize: 8,
-        args: [0, 0, 0xff, enabled ? 1 : 0, 0, 0, 0, 0] });
+        args: [0, 0, RAZER_FIRMWARE_ALL_KEYS, enabled ? 1 : 0, 0, 0, 0, 0] });
       const actual = await this.exchange({ commandClass: 0x02, commandId: 0x9a, dataSize: 3,
-        args: [0, 0, 0xff] });
-      if (actual.length < 4 || actual[2] !== 0xff || actual[3] !== Number(enabled)) {
+        args: [0, 0, RAZER_FIRMWARE_ALL_KEYS] });
+      if (actual.length < 4 || actual[2] !== RAZER_FIRMWARE_ALL_KEYS || actual[3] !== Number(enabled)) {
         throw new Error("The Razer keyboard did not confirm the rapid-trigger switch.");
       }
     });

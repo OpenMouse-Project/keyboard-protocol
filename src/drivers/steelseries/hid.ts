@@ -18,6 +18,7 @@ import {
   encodeSteelseriesFileOpen,
   encodeSteelseriesFirmwarePoll,
   encodeSteelseriesHallThresholds,
+  encodeSteelseriesInit,
   encodeSteelseriesLighting,
   encodeSteelseriesOledDirect,
   encodeSteelseriesOledDisplay,
@@ -53,6 +54,7 @@ export class SteelSeriesKeyboardHidClient {
 
   private cachedBlob: Uint8Array | null = null;
   private directLighting: Map<number, SteelSeriesRgb> | null = null;
+  private wirelessInitialized = false;
   private get wireless2023(): boolean {
     return this.device.productId === 0x1630 || this.device.productId === 0x1632;
   }
@@ -111,6 +113,7 @@ export class SteelSeriesKeyboardHidClient {
 
   async close(): Promise<void> {
     this.directLighting = null;
+    this.wirelessInitialized = false;
     this.firmwareWaiter?.resolve(new Uint8Array());
     this.firmwareWaiter = null;
     if (this.listening) this.device.removeEventListener("inputreport", this.onInputReport);
@@ -249,7 +252,14 @@ export class SteelSeriesKeyboardHidClient {
     return decoded;
   }
 
-  /** Update keys in the current direct-lighting frame, or provide all 84 keys initially. */
+  /** Send the `0x4B` init report once per opened connection before wireless direct frames. */
+  private async initializeWirelessLighting(): Promise<void> {
+    if (!this.wireless2023 || this.wirelessInitialized) return;
+    await this.device.sendFeatureReport(FEATURE_REPORT_ID, encodeSteelseriesInit());
+    this.wirelessInitialized = true;
+  }
+
+  /** Update keys in the current direct-lighting frame, or provide all 86 keys initially. */
   async setLighting(colors: ReadonlyMap<number, SteelSeriesRgb>): Promise<void> {
     return this.serialized(async () => {
       const next = new Map(this.directLighting ?? []);
@@ -257,13 +267,14 @@ export class SteelSeriesKeyboardHidClient {
         if (!STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.includes(usage)) {
           throw new RangeError(`SteelSeries key ${usage} has no direct-lighting zone.`);
         }
-        next.set(usage, color);
+        next.set(usage, [color[0], color[1], color[2]]);
       }
       if (next.size !== STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.length) {
-        throw new Error("A complete 84-key lighting frame is required before partial updates can preserve other colours.");
+        throw new Error("A complete 86-key lighting frame is required before partial updates can preserve other colours.");
       }
       const frame = encodeSteelseriesLighting(next, this.lightingPacketId());
       await this.open();
+      await this.initializeWirelessLighting();
       await this.device.sendFeatureReport(FEATURE_REPORT_ID, frame);
       this.directLighting = next;
     });
@@ -273,10 +284,11 @@ export class SteelSeriesKeyboardHidClient {
   async setSolidLighting(red: number, green: number, blue: number): Promise<void> {
     return this.serialized(async () => {
       await this.open();
-      const color = [red, green, blue] as const;
       const colors = new Map<number, SteelSeriesRgb>();
-      for (const usage of STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS) colors.set(usage, color);
-      await this.device.sendFeatureReport(FEATURE_REPORT_ID, encodeSteelseriesLighting(colors, this.lightingPacketId()));
+      for (const usage of STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS) colors.set(usage, [red, green, blue]);
+      const frame = encodeSteelseriesLighting(colors, this.lightingPacketId());
+      await this.initializeWirelessLighting();
+      await this.device.sendFeatureReport(FEATURE_REPORT_ID, frame);
       this.directLighting = colors;
     });
   }

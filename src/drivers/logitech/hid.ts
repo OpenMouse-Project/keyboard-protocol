@@ -632,10 +632,8 @@ export class LogitechKeyboardHidClient {
         const chunk = colors.slice(offset, offset + 4);
         const frame = new Array(16).fill(0);
         chunk.forEach((color, slot) => frame.splice(slot * 4, 4, color.zone, color.red, color.green, color.blue));
-        const response = await this.requestMode(index, 0x01, frame, true);
-        chunk.forEach((color, slot) => {
-          if (response[slot * 4] !== color.zone) throw new Error("The Logitech keyboard did not acknowledge the per-zone colour frame.");
-        });
+        // fn 1 only acknowledges the setter; its reply carries no zone echo to compare.
+        await this.requestMode(index, 0x01, frame, true);
       }
       await this.requestMode(index, 0x07, [persist ? 1 : 0, 0, 0, 0, 0], true);
     });

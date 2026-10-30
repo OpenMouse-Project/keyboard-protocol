@@ -5,7 +5,9 @@ Coverage ledger for the SteelSeries wired Apex Pro TKL family.
 The catalog also includes Apex Pro TKL Wireless (2023) PIDs `0x1630` and
 `0x1632` for direct lighting. OpenRGB's [wireless protocol fix](https://gitlab.com/CalcProgrammer1/OpenRGB/-/merge_requests/3237)
 identifies `0x61` as its direct-lighting packet and reports a USB test on
-`0x1632`. The driver uses that packet for solid and per-key lighting. It does
+`0x1632`. The driver sends OpenRGB's `0x4B` init feature report (64 data
+bytes) once per opened connection, then uses a 642-data-byte `0x61` frame
+(643 on the wire, matching OpenRGB) for solid and per-key lighting. It does
 not expose the wired profile/analog commands or the unconfirmed lighting
 release command on those PIDs. Their HID collection and this implementation
 still need a hardware test through OpenMouse.
@@ -67,7 +69,7 @@ starts behind a three-byte header. File id `0x80 + slot` addresses slots 0..4.
 | Rapid Tap pairs | output `38 67 0a {index,hid1,hid2,mode-or-0x80,0,0}×10` | Complete ten-slot table, indexed 0–9; `0x80` means report both keys. Requires `0x1628` with schema-8 on-board profile. |
 | OLED profile bitmap | feature `38 83 00` + 640 bytes | 640-byte opaque image; decoded bitmap/packing is not assumed. Cached for `saveProfile()`. `0x1628` only. |
 | OLED direct image | feature `1f 81` + 640 bytes, output `1f 82` | GameSense image override and release; does not change the cached on-board image. `setOledDirectPixels()` packs 128×40 pixels in row-major MSB-first order. `0x1628` only. |
-| Direct lighting | feature `40 count {hid,r,g,b}*84` | Repaints all 84 addressable keys. The first custom frame must supply all 84 colours; subsequent partial updates preserve colours from that frame. `clearLighting()` sends output `41` to hand control back to the profile and drops the cache. |
+| Direct lighting | feature `40 count {hid,r,g,b}*86` (wireless: `61`, 642 data bytes, after one `4B` init) | Repaints all 86 addressable keys, including ISO usages `0x32` and `0x64`. The first custom frame must supply all 86 colours; subsequent partial updates preserve colours from that frame. `clearLighting()` sends output `41` to hand control back to the profile and drops the cache. |
 | Profile persistence | output `02 01 fs`, feature `03 01 fs …` ×25, output `B1 slot` | `saveProfile()` patches the cached blob, reseals the STM32 CRC, writes all 12,500 bytes, runs validation and compares the read-back byte for byte. |
 
 The new secondary-layer, Rapid Tap-pair and OLED APIs reject other PIDs:
@@ -101,7 +103,7 @@ Direct OLED images (`1f 81`) are temporary and never saved.
   description-derived, while the capture only observes `38 67`.
 - Lighting effects and Prism sync. Only the direct per-key colour frame is
   implemented; there is no lighting read-back, so a partial initial frame is
-  rejected until all 84 colours are supplied by the caller.
+  rejected until all 86 colours are supplied by the caller.
 - On-board OLED `38 83 00` bit order and orientation, plus animation timing,
   are not established by the command descriptions. That API still accepts
   already-packed 640-byte device data.

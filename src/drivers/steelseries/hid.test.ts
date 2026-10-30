@@ -211,12 +211,12 @@ test("OLED direct writes release control without changing on-board profile", asy
   await client.close();
 });
 
-test("direct lighting paints all 84 keys and clear hands control back", async () => {
+test("direct lighting paints all 86 keys and clear hands control back", async () => {
   const device = new FakeSteelSeriesKeyboard();
   const client = new SteelSeriesKeyboardHidClient(device as unknown as HIDDevice);
   await client.setSolidLighting(255, 0, 0);
   const light = device.frames.find((frame) => frame.kind === "feature" && frame.data[0] === 0x40);
-  assert.equal(light?.data[1], 84);
+  assert.equal(light?.data[1], 86);
   assert.deepEqual(light?.data.slice(2, 6), [0x04, 255, 0, 0]);
   await client.clearLighting();
   assert.ok(device.frames.some((frame) => frame.kind === "output" && frame.data[0] === 0x41));
@@ -229,23 +229,60 @@ test("2023 wireless uses its lighting packet and rejects undocumented profile co
   const client = new SteelSeriesKeyboardHidClient(device as unknown as HIDDevice);
   assert.equal(SteelSeriesKeyboardHidClient.isSupported(device as unknown as HIDDevice), true);
   await client.setSolidLighting(1, 2, 3);
-  assert.equal(device.frames.find((frame) => frame.kind === "feature")?.data[0], 0x61);
+  const features = device.frames.filter((frame) => frame.kind === "feature");
+  assert.deepEqual([...features[0]!.data], [0x4b, ...new Array(63).fill(0)]);
+  assert.equal(features[1]?.data[0], 0x61);
+  assert.equal(features[1]?.data.length, 642);
+  await client.setSolidLighting(4, 5, 6);
+  assert.equal(device.frames.filter((frame) => frame.kind === "feature" && frame.data[0] === 0x4b).length, 1);
+  await client.close();
+  await client.setSolidLighting(7, 8, 9);
+  assert.equal(device.frames.filter((frame) => frame.kind === "feature" && frame.data[0] === 0x4b).length, 2);
   await assert.rejects(client.readAnalogProfile(), /wireless on-board profile format/);
   await assert.rejects(client.clearLighting(), /wireless direct-lighting release/);
+  await client.close();
+});
+
+test("wired direct lighting never sends the wireless init and keeps 644 data bytes", async () => {
+  const device = new FakeSteelSeriesKeyboard();
+  const client = new SteelSeriesKeyboardHidClient(device as unknown as HIDDevice);
+  await client.setSolidLighting(1, 2, 3);
+  const features = device.frames.filter((frame) => frame.kind === "feature");
+  assert.equal(features.length, 1);
+  assert.equal(features[0]?.data[0], 0x40);
+  assert.equal(features[0]?.data.length, 644);
+  await client.close();
+});
+
+test("ISO usages are addressable and cached colours are copied", async () => {
+  const device = new FakeSteelSeriesKeyboard();
+  const client = new SteelSeriesKeyboardHidClient(device as unknown as HIDDevice);
+  await client.setSolidLighting(0, 0, 0);
+  const shared: [number, number, number] = [9, 8, 7];
+  await client.setLighting(new Map([[0x32, shared], [0x64, shared]]));
+  shared[0] = 200;
+  await client.setLighting(new Map([[0x04, [1, 2, 3]]]));
+  const last = device.frames.filter((frame) => frame.kind === "feature" && frame.data[0] === 0x40).at(-1)!;
+  const entries = new Map<number, number[]>();
+  for (let offset = 2; offset + 3 < last.data.length && last.data[offset]; offset += 4) {
+    entries.set(last.data[offset]!, [...last.data.slice(offset + 1, offset + 4)]);
+  }
+  assert.deepEqual(entries.get(0x32), [9, 8, 7]);
+  assert.deepEqual(entries.get(0x64), [9, 8, 7]);
   await client.close();
 });
 
 test("partial direct lighting preserves previously painted keys", async () => {
   const device = new FakeSteelSeriesKeyboard();
   const client = new SteelSeriesKeyboardHidClient(device as unknown as HIDDevice);
-  await assert.rejects(client.setLighting(new Map([[0x04, [1, 2, 3]]])), /complete 84-key/);
+  await assert.rejects(client.setLighting(new Map([[0x04, [1, 2, 3]]])), /complete 86-key/);
   assert.equal(device.frames.length, 0);
   await client.setSolidLighting(255, 0, 0);
   await client.setLighting(new Map([[0x04, [1, 2, 3]]]));
   const lights = device.frames.filter((frame) => frame.kind === "feature" && frame.data[0] === 0x40);
   assert.deepEqual(lights[1]?.data.slice(2, 10), [0x04, 1, 2, 3, 0x05, 255, 0, 0]);
   await client.clearLighting();
-  await assert.rejects(client.setLighting(new Map([[0x04, [1, 2, 3]]])), /complete 84-key/);
+  await assert.rejects(client.setLighting(new Map([[0x04, [1, 2, 3]]])), /complete 86-key/);
   await client.close();
 });
 

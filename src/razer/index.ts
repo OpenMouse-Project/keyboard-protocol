@@ -158,8 +158,13 @@ export function razerRapidTriggerUnits(mm: number): number {
   return Math.round(mm * 16380);
 }
 
+/** Firmware key ID that targets every key rather than one. */
+export const RAZER_FIRMWARE_ALL_KEYS = 0xff;
+
 export function encodeRazerRapidTrigger(key: number, enabled: boolean, upMm: number, downMm: number): RazerCommand {
-  if (!Number.isInteger(key) || key < 1 || key > 255) throw new RangeError("Razer firmware key ID must be 1–255.");
+  if (!Number.isInteger(key) || key < 1 || key >= RAZER_FIRMWARE_ALL_KEYS) {
+    throw new RangeError("Razer firmware key ID must be 1–254; 255 targets every key.");
+  }
   const up = razerRapidTriggerUnits(upMm);
   const down = razerRapidTriggerUnits(downMm);
   return { commandClass: 0x02, commandId: 0x1a, dataSize: 8,

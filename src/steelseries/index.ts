@@ -14,6 +14,10 @@ export const STEELSERIES_VENDOR_ID = 0x1038;
 export const STEELSERIES_CONFIG_USAGE_PAGE = 0xffc0;
 export const STEELSERIES_CONFIG_USAGE = 0x0001;
 export const STEELSERIES_FEATURE_DATA_LENGTH = 644;
+/** Wireless packet `0x61` is 643 bytes on the wire including the report ID (OpenRGB). */
+export const STEELSERIES_WIRELESS_LIGHTING_DATA_LENGTH = 642;
+/** Data bytes of the `0x4B` wireless initialization feature report (64 plus the report ID). */
+export const STEELSERIES_INIT_DATA_LENGTH = 64;
 export const STEELSERIES_OUTPUT_DATA_LENGTH = 64;
 
 export interface SteelSeriesKeyboardProduct {
@@ -211,9 +215,12 @@ export function decodeSteelseriesProfile(blob: Uint8Array, slot = 0): SteelSerie
     oled, deviceSchema };
 }
 
-function featureFrame(body: readonly number[]): Uint8Array<ArrayBuffer> {
-  if (body.length > STEELSERIES_FEATURE_DATA_LENGTH) throw new RangeError("SteelSeries feature frame is too large.");
-  const frame = new Uint8Array(STEELSERIES_FEATURE_DATA_LENGTH);
+function featureFrame(
+  body: readonly number[],
+  dataLength: number = STEELSERIES_FEATURE_DATA_LENGTH,
+): Uint8Array<ArrayBuffer> {
+  if (body.length > dataLength) throw new RangeError("SteelSeries feature frame is too large.");
+  const frame = new Uint8Array(dataLength);
   frame.set(body);
   return frame;
 }
@@ -383,8 +390,8 @@ export const STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS: readonly number[] = [
   0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
   0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
   0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
-  0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45,
-  0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52,
+  0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45,
+  0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x64,
   0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe7, 0xf0, 0x28, 0x31, 0xe6,
 ];
 
@@ -403,7 +410,15 @@ export function encodeSteelseriesLighting(
     }
     entries.push(usage, color[0], color[1], color[2]);
   }
-  return featureFrame([packetId, STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.length, ...entries]);
+  return featureFrame(
+    [packetId, STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.length, ...entries],
+    packetId === 0x61 ? STEELSERIES_WIRELESS_LIGHTING_DATA_LENGTH : STEELSERIES_FEATURE_DATA_LENGTH,
+  );
+}
+
+/** `00 4B` feature report OpenRGB sends once before wireless `0x61` direct-lighting frames. */
+export function encodeSteelseriesInit(): Uint8Array<ArrayBuffer> {
+  return featureFrame([0x4b], STEELSERIES_INIT_DATA_LENGTH);
 }
 
 /** `00 41` output report: hand lighting back to the on-board profile. */

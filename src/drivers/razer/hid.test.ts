@@ -231,10 +231,10 @@ test("Huntsman V3 rapid trigger writes the RAM slot and verifies the per-key rep
   await client.close();
 });
 
-test("Huntsman V3 profile rapid-trigger switch preserves stored distances", async () => {
+test("Huntsman V3 all-keys rapid-trigger override targets firmware key FF", async () => {
   const device = new FakeRazerKeyboard();
   const client = new RazerKeyboardHidClient(device as unknown as HIDDevice);
-  await client.setRapidTriggerGlobal(true);
+  await client.setRapidTriggerAllKeys(true);
   const write = device.writes.find((entry) => entry.commandClass === 2 && entry.commandId === 0x1a);
   assert.deepEqual(write?.args, [0, 0, 0xff, 1, 0, 0, 0, 0]);
   await client.close();
