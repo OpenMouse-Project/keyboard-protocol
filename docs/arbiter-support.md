@@ -227,11 +227,34 @@ the layout was found.
 
 ### SuperTap (user mode)
 
-`SetUserMode`/`GetUserMode` carry six bytes:
+**What it is.** SuperTap is Arbiter's name for SOCD (simultaneous opposing
+cardinal directions) handling. Arbiter announced it as "SUPER TAP (or SOCD)" for
+its web app, and reviews of the Polar 75 PRO describe it as the keyboard
+accepting only the input of the last-pressed key. You choose a pair of keys
+(typically the left/right or forward/back movement keys) and, while both are
+held, only the later press counts. This comes from Arbiter's announcement and
+press reviews, not from the firmware, so the exact resolution rule (for example
+what happens on release) is unconfirmed.
+
+**What the wire carries.** `SetUserMode`/`GetUserMode` carry six bytes:
 `[layoutIndex, mode, checkFlag, flag & 0x7F | alternative-bit, keyIndex0,
-keyIndex1]`. The UI reads `checkFlag > 0` as enabled and `keyIndex0/1` as the
-two keys of the SuperTap pair. Only models with `superTapSupport` expose it.
-The meaning of `mode`, `flag` and `alternative` is not established.
+keyIndex1]`. The vendor app writes `mode` 1, `flag` 0 and `alternative` 0, takes
+`layoutIndex` from the current layer, reads `checkFlag > 0` as enabled and
+`keyIndex0/1` as the two keys of the pair. In its UI you switch SuperTap on,
+click one of two key tiles and then a key on the keyboard drawing. Turning the
+switch saves the profile before sending the user mode. Only models with
+`superTapSupport` expose it.
+
+**`keyIndex` is a wire index, not a matrix position.** The vendor app finds each
+key's position in the main layer's layout array and sends that index; the `s2`
+board subtracts one for positions after 27 on write and adds one on read. That is
+the same skip as its key mapping table (`arbiterWireToMatrix`), and it confirms
+the placeholder at index 28 independently of the travel table. Convert with
+`arbiterWireToMatrix(product, "bindings", keyIndex)` before looking up a key's
+name; on every other model the two are equal.
+
+The meaning of `mode`, `flag` and `alternative` beyond the values the vendor app
+writes is not established.
 
 ## Implemented
 

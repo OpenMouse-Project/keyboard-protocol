@@ -220,3 +220,15 @@ test("the PRO FN layers differ from Main where the vendor defines media and func
   assert.equal(pro65.layers[1]![60], ARBITER_KEY_CODE.fnLayer);
   assert.equal(pro65.layers[0]![63], ARBITER_KEY_CODE.fn);
 });
+
+test("SuperTap key indices are wire indices, so the s2 board's names shift after 27", () => {
+  const names = (protocol: string, vendorId: number, productId: number, usagePage: number, indices: number[]) => {
+    const product = arbiterProduct(vendorId, productId, usagePage)!;
+    assert.equal(product.protocol, protocol);
+    const { matrix } = arbiterLayout(product);
+    return indices.map((index) => matrix[arbiterWireToMatrix(product, "bindings", index)!]!.name);
+  };
+  assert.deepEqual(names("i2", 0x371c, 0xa003, 0xff02, [44, 45]), ["LShiftKey", "Z"]);
+  assert.deepEqual(names("s2", 0x371c, 0xa006, 0xff01, [27, 28, 44]), ["OemCloseBrackets", "Delete", "LShiftKey"]);
+  assert.deepEqual(names("u2", 0x371c, 0xa001, 0xff02, [44, 45]), ["D", "F"]);
+});

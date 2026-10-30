@@ -388,7 +388,13 @@ export function encodeArbiterBoardProfile(profile: number, profileCount: number)
   return encodeArbiterRequest(ARBITER_COMMAND.setBoardProfile, ARBITER_PACKET.short, [profile]);
 }
 
-/** `[layoutIndex, mode, checkFlag, flag | alternative << 7, keyIndex0, keyIndex1]`. */
+/**
+ * SuperTap (Arbiter's SOCD / last-input-priority feature):
+ * `[layoutIndex, mode, checkFlag, flag | alternative << 7, keyIndex0, keyIndex1]`.
+ * The vendor app writes `mode` 1, `flag` 0 and `alternative` 0. `checkFlag > 0`
+ * means enabled. `keyIndex` entries are WIRE indices into the main layer, so use
+ * `arbiterWireToMatrix(product, "bindings", index)` to find the key.
+ */
 export interface ArbiterUserMode {
   layoutIndex: number;
   mode: number;
