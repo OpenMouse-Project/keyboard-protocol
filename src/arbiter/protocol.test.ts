@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ARBITER_COMMAND,
+  ARBITER_KEY_CODE,
   ARBITER_PACKET,
   ARBITER_PRODUCTS,
   arbiterChecksum,
   arbiterIsPro,
   arbiterKeyMappingPackets,
+  arbiterLayout,
+  arbiterMatrixToWire,
+  arbiterWireToMatrix,
   arbiterTravelPackets,
   arbiterPacketHeader,
   arbiterProduct,
@@ -161,4 +165,58 @@ test("the catalog matches the vendor bundle and is entirely unverified", () => {
   ]);
   assert.deepEqual(ARBITER_PRODUCTS.filter(arbiterIsPro).map((entry) => [entry.name, entry.layers, entry.profiles]),
     [["Polar 65 PRO", 2, 3], ["Polar 75 PRO", 2, 3]]);
+});
+
+test("layouts match the catalog and the factory main layer is the matrix", () => {
+  for (const entry of ARBITER_PRODUCTS) {
+    const layout = arbiterLayout(entry);
+    assert.equal(layout.layers.length, entry.layers);
+    for (const layer of layout.layers) assert.equal(layer.length, layout.matrix.length);
+    assert.deepEqual(layout.layers[0], layout.matrix.map((key) => key.keyCode));
+  }
+  assert.deepEqual(ARBITER_PRODUCTS.map((entry) => arbiterLayout(entry).matrix.length), [68, 68, 68, 68, 68, 70, 68, 82]);
+});
+
+test("wire entries map to matrix keys without landing on a placeholder", () => {
+  for (const entry of ARBITER_PRODUCTS) {
+    const { matrix } = arbiterLayout(entry);
+    for (const table of ["travel", "bindings"] as const) {
+      const size = table === "travel" ? entry.travelKeys : entry.bindingKeys;
+      const seen = new Set<number>();
+      for (let wire = 0; wire < size; wire += 1) {
+        const index = arbiterWireToMatrix(entry, table, wire)!;
+        assert.equal(arbiterMatrixToWire(entry, table, index), wire);
+        seen.add(index);
+        // The 75 PRO's travel table keeps its placeholder slot; no other table does.
+        if (!(entry.protocol === "u2" && table === "travel" && wire === 81)) assert.notEqual(matrix[index]!.name, "None");
+      }
+      assert.equal(seen.size, size);
+      assert.equal(arbiterWireToMatrix(entry, table, size), null);
+    }
+  }
+});
+
+test("the s2 board skips matrix index 28 and the 75 PRO omits its last key mapping slot", () => {
+  const s2 = arbiterProduct(0x371c, 0xa006, 0xff01)!;
+  assert.deepEqual([27, 28, 68].map((wire) => arbiterWireToMatrix(s2, "travel", wire)), [27, 29, 69]);
+  assert.equal(arbiterMatrixToWire(s2, "bindings", 28), null);
+  assert.equal(arbiterLayout(s2).matrix[28]!.name, "None");
+  const pro75 = arbiterProduct(0x371c, 0xa001, 0xff02)!;
+  assert.equal(arbiterMatrixToWire(pro75, "bindings", 81), null);
+  assert.equal(arbiterMatrixToWire(pro75, "travel", 81), 81);
+  assert.equal(arbiterLayout(pro75).matrix[81]!.name, "None");
+});
+
+test("the PRO FN layers differ from Main where the vendor defines media and function keys", () => {
+  const pro65 = arbiterLayout(arbiterProduct(0x371c, 0xa003, 0xff02)!);
+  assert.equal(pro65.layers[1]!.filter((code, i) => code !== pro65.layers[0]![i]).length, 33);
+  const names = pro65.matrix.map((key) => key.name);
+  assert.equal(names[1], "D1");
+  assert.equal(pro65.layers[1]![1], 112); // F1
+  const pro75 = arbiterLayout(arbiterProduct(0x371c, 0xa001, 0xff02)!);
+  assert.equal(pro75.layers[1]!.filter((code, i) => code !== pro75.layers[0]![i]).length, 8);
+  // LShift is the SuperTap key on the FN layer, and the Alt positions are the Fn key.
+  assert.equal(pro65.layers[1]![44], ARBITER_KEY_CODE.superTap);
+  assert.equal(pro65.layers[1]![60], ARBITER_KEY_CODE.fnLayer);
+  assert.equal(pro65.layers[0]![63], ARBITER_KEY_CODE.fn);
 });

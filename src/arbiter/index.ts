@@ -4,6 +4,10 @@
  * keyboard has been exercised through this package: every catalog entry is
  * `verified: false`.
  */
+import { ARBITER_LAYOUTS, type ArbiterLayout } from "./layouts.ts";
+
+export * from "./layouts.ts";
+
 export const ARBITER_VENDOR_ID = 0x1a81;
 export const ARBITER_VENDOR_ID_ALT = 0x371c;
 export const ARBITER_CONFIG_USAGE = 1;
@@ -17,6 +21,20 @@ export const ARBITER_LIGHT_COLOR_SLOTS = 7;
 export const ARBITER_USER_MODE_SIZE = 6;
 /** A reply starting `[0x04, 0xC9]` announces a profile switch on the PRO models. */
 export const ARBITER_PROFILE_CHANGED = [0x04, 0xc9] as const;
+
+/**
+ * Key codes the vendor's label table gives a name of its own. They collide with
+ * .NET `Keys` names (249 is `EraseEof` there), so the layouts' `name` field is
+ * not the label to show for these.
+ */
+export const ARBITER_KEY_CODE = {
+  /** "Fn" on the FN layer's Alt positions. */
+  fnLayer: 242,
+  /** "Fn" on the main layer. */
+  fn: 245,
+  /** "SuperTap". */
+  superTap: 249,
+} as const;
 
 export const ARBITER_COMMAND = {
   setTravel: 0,
@@ -103,6 +121,41 @@ export function arbiterProduct(vendorId: number, productId: number, usagePage: n
 
 export function arbiterIsPro(entry: ArbiterProduct): boolean {
   return entry.protocol === "i2" || entry.protocol === "u2";
+}
+
+/** The vendor's key matrix and factory layers for this model. */
+export function arbiterLayout(entry: ArbiterProduct): ArbiterLayout {
+  return ARBITER_LAYOUTS[entry.protocol];
+}
+
+export type ArbiterTable = "travel" | "bindings";
+
+function arbiterTableSize(entry: ArbiterProduct, table: ArbiterTable): number {
+  return table === "travel" ? entry.travelKeys : entry.bindingKeys;
+}
+
+/** Matrix index of the `s2` board's placeholder, which its wire tables skip. */
+const S2_PLACEHOLDER = 28;
+
+/**
+ * The matrix position a wire table entry belongs to, or `null` when the index
+ * is outside the table. Entries are in wire order: the `s2` board's tables skip
+ * matrix index 28, and the 75 PRO's key mapping omits its final placeholder
+ * (its travel table keeps it). Every other model is the identity.
+ */
+export function arbiterWireToMatrix(entry: ArbiterProduct, table: ArbiterTable, wireIndex: number): number | null {
+  if (!Number.isInteger(wireIndex) || wireIndex < 0 || wireIndex >= arbiterTableSize(entry, table)) return null;
+  return entry.protocol === "s2" && wireIndex >= S2_PLACEHOLDER ? wireIndex + 1 : wireIndex;
+}
+
+/** The wire entry for a matrix position, or `null` for a placeholder that is not on the wire. */
+export function arbiterMatrixToWire(entry: ArbiterProduct, table: ArbiterTable, matrixIndex: number): number | null {
+  if (!Number.isInteger(matrixIndex) || matrixIndex < 0 || matrixIndex >= arbiterLayout(entry).matrix.length) return null;
+  if (entry.protocol === "s2") {
+    if (matrixIndex === S2_PLACEHOLDER) return null;
+    return matrixIndex > S2_PLACEHOLDER ? matrixIndex - 1 : matrixIndex;
+  }
+  return matrixIndex < arbiterTableSize(entry, table) ? matrixIndex : null;
 }
 
 /** Packets in a travel table: one `make, break` pair per key. */

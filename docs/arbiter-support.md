@@ -113,12 +113,52 @@ Each class's decoders were read to find how many entries are on the wire:
 - `s2` skips matrix index 28 (the `None` placeholder) when it writes travel and
   both ways for key mapping, so its wire tables hold 69 of the matrix's 70
   entries. Its travel *read* decoder does not skip index 28 while its travel
-  *write* does, so one of them is probably wrong in the vendor app; the driver
-  treats both as 69 wire entries and fails a read of any other size.
+  *write* does. The write is the one to trust: the skip in `J1` was added on
+  purpose for this board, the key mapping decoders skip the same index in both
+  directions, and the shared read decoder (`yr`) was never changed for it. The
+  read decoder then puts every entry after index 27 one key early, which no one
+  would notice because every key starts at the same default (`10`/`10`). The
+  driver therefore treats both tables as 69 wire entries, and
+  `arbiterWireToMatrix`/`arbiterMatrixToWire` apply the skip. This is an
+  inference from the code, not a measurement; a read that returns another size
+  fails with an error and nothing is written.
 - `u2` drops the matrix's final `None` entry from each key mapping layer (81 of
   82) but keeps all 82 in the travel table.
 - The driver works in wire order and does not map entries to key positions; that
   needs the vendor's matrices.
+
+### Layouts and the FN layer
+
+`arbiterLayout(product)` returns the vendor's key matrix (name, key code, row) and
+the factory key codes of every layer, transcribed from the bundle. The factory
+main layer equals the matrix on every model. `arbiterWireToMatrix` and
+`arbiterMatrixToWire` convert between wire entries and matrix positions.
+
+The PRO models' second layer is the FN layer. Their factory FN layer is the
+main layer with these keys replaced (matrix key, then the FN code):
+
+- **65 PRO (33 keys):**
+  - `1`-`0` give `F1`-`F10`, `-` and `=` give `F11` and `F12`, and `` ` `` gives
+    `Insert`.
+  - `I`, `O`, `P` give previous, next and play/pause; `[`, `]`, `\` give volume
+    down, volume up and mute.
+  - `Delete` gives `Print`, `PgUp` gives `Home` and `PgDn` gives `End`.
+  - `LShift` gives code 249, which the vendor labels **SuperTap**. `LAlt`,
+    `RAlt` and `LWin` hold codes 242/242/243; 242 is labelled **Fn**.
+  - `Esc` (224), `Enter` (148), `RShift` (202) and the arrows (204, 205, 206,
+    207) hold reserved codes the vendor gives no label.
+- **75 PRO (8 keys):** `F9`-`F12` give previous, play/pause, next and `Print`;
+  `` ` `` gives `Insert`; `LShift` gives SuperTap (249); `RAlt` gives Fn (242);
+  `Home` gives `End`.
+
+`ARBITER_KEY_CODE` names the codes the vendor labels itself (`fnLayer` 242, `fn`
+245, `superTap` 249). Their .NET `Keys` names differ (249 is `EraseEof`), so do
+not label them from the layouts' `name` field.
+
+What the FN layer does on the keyboard is read from these defaults, not
+observed. It is presumably the layer active while Fn is held, and the reserved
+codes presumably drive keyboard functions such as lighting, but the bundle does
+not say.
 
 ## Commands
 
@@ -247,7 +287,8 @@ Behavior worth knowing:
   matrix defaults are all `0`. It only carries a nonzero value if the keyboard
   itself reports one. The driver therefore writes `0` for a rebound key and
   leaves other keys' values untouched.
-- The FN layer's behaviour on the keyboard itself.
+- What the FN layer's reserved codes (224, 148, 202, 204-207, 243) do, and how
+  the keyboard activates the layer; only the factory defaults are known.
 - Which of the `s2` travel read and write sizes is right (see
   [Table sizes](#table-sizes)).
 - Wireless, Bluetooth and dongle transports. The bundle has per-transport
