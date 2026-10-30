@@ -265,10 +265,42 @@ export function decodeArbiterTablePacket(reply: ArbiterReply): ArbiterTablePacke
   return { index, total, entries: reply.data.slice(1) };
 }
 
+/**
+ * Travel values are tenths of a millimetre. The vendor app labels its sliders
+ * with `value / 10` mm, and limits actuation to 1-38 (0.1-3.8 mm) and rapid
+ * trigger to 1-24 (0.1-2.4 mm) on every model. The firmware's own limits have
+ * not been tested on hardware, so writes are held to the vendor app's ranges.
+ */
+export const ARBITER_TRAVEL_UNIT_MM = 0.1;
+export const ARBITER_ACTUATION_RANGE = { min: 1, max: 38 } as const;
+export const ARBITER_RAPID_TRIGGER_RANGE = { min: 1, max: 24 } as const;
+
+/** Millimetres for a raw travel value. */
+export function arbiterTravelToMm(value: number): number {
+  return Math.round(value) / 10;
+}
+
+/** The raw travel value for a distance in millimetres, rounded to the nearest 0.1 mm. */
+export function arbiterMmToTravel(mm: number): number {
+  if (!Number.isFinite(mm)) throw new RangeError("Distance must be a number of millimetres.");
+  return Math.round(mm * 10);
+}
+
+/** Throws unless `value` is a whole number inside the vendor app's range for that setting. */
+export function assertArbiterTravelInRange(kind: "actuation" | "rapidTrigger", value: number): void {
+  const range = kind === "actuation" ? ARBITER_ACTUATION_RANGE : ARBITER_RAPID_TRIGGER_RANGE;
+  if (!Number.isInteger(value) || value < range.min || value > range.max) {
+    throw new RangeError(
+      `Arbiter ${kind === "actuation" ? "actuation" : "rapid trigger"} must be ${range.min}-${range.max} `
+      + `(${arbiterTravelToMm(range.min)}-${arbiterTravelToMm(range.max)} mm).`,
+    );
+  }
+}
+
 export interface ArbiterKeyTravel {
-  /** Actuation, in the firmware's own unit (the unit is not established). */
+  /** Actuation in tenths of a millimetre (see {@link arbiterTravelToMm}). */
   make: number;
-  /** Rapid-trigger distance, in the firmware's own unit. */
+  /** Rapid-trigger distance in tenths of a millimetre. */
   break: number;
 }
 

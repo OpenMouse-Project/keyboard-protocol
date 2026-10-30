@@ -6,6 +6,9 @@ import {
   ARBITER_PACKET,
   ARBITER_PRODUCTS,
   arbiterChecksum,
+  arbiterMmToTravel,
+  arbiterTravelToMm,
+  assertArbiterTravelInRange,
   arbiterIsPro,
   arbiterKeyMappingPackets,
   arbiterLayout,
@@ -231,4 +234,18 @@ test("SuperTap key indices are wire indices, so the s2 board's names shift after
   assert.deepEqual(names("i2", 0x371c, 0xa003, 0xff02, [44, 45]), ["LShiftKey", "Z"]);
   assert.deepEqual(names("s2", 0x371c, 0xa006, 0xff01, [27, 28, 44]), ["OemCloseBrackets", "Delete", "LShiftKey"]);
   assert.deepEqual(names("u2", 0x371c, 0xa001, 0xff02, [44, 45]), ["D", "F"]);
+});
+
+test("travel values are tenths of a millimetre within the vendor app's ranges", () => {
+  assert.equal(arbiterTravelToMm(10), 1);
+  assert.equal(arbiterTravelToMm(38), 3.8);
+  assert.equal(arbiterMmToTravel(0.1), 1);
+  assert.equal(arbiterMmToTravel(2.4), 24);
+  assert.equal(arbiterMmToTravel(1.04), 10);
+  assert.throws(() => arbiterMmToTravel(Number.NaN), RangeError);
+  assert.doesNotThrow(() => assertArbiterTravelInRange("actuation", 38));
+  assert.doesNotThrow(() => assertArbiterTravelInRange("rapidTrigger", 1));
+  assert.throws(() => assertArbiterTravelInRange("actuation", 39), /1-38 \(0.1-3.8 mm\)/);
+  assert.throws(() => assertArbiterTravelInRange("rapidTrigger", 25), /1-24 \(0.1-2.4 mm\)/);
+  assert.throws(() => assertArbiterTravelInRange("rapidTrigger", 0), RangeError);
 });

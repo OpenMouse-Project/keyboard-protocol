@@ -198,7 +198,10 @@ test("travel writes reject bad keys and values before anything is sent", async (
   const device = new FakeArbiterKeyboard();
   const client = new ArbiterKeyboardHidClient(device.hid);
   await assert.rejects(client.setKeyTravel([{ index: 68, make: 1 }]), /outside/);
-  await assert.rejects(client.setKeyTravel([{ index: 0, make: 300 }]), /0 to 255/);
+  await assert.rejects(client.setKeyTravel([{ index: 0, make: 39 }]), /actuation must be 1-38 \(0.1-3.8 mm\)/);
+  await assert.rejects(client.setKeyTravel([{ index: 0, make: 0 }]), /actuation must be/);
+  await assert.rejects(client.setKeyTravel([{ index: 0, break: 25 }]), /rapid trigger must be 1-24 \(0.1-2.4 mm\)/);
+  await assert.rejects(client.setKeyTravel([{ index: 0, make: 1.5 }]), /actuation must be/);
   assert.equal(device.sent.some((frame) => (frame[1]! & 0x3f) === ARBITER_COMMAND.setTravel), false);
   await client.close();
 });

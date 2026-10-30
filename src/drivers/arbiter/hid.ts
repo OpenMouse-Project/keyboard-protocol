@@ -6,6 +6,7 @@ import {
   ARBITER_REPORT_ID,
   arbiterKeyMappingPackets,
   arbiterTravelPackets,
+  assertArbiterTravelInRange,
   arbiterStatusName,
   decodeArbiterFirmware,
   decodeArbiterKeyMappingPacket,
@@ -183,14 +184,16 @@ export class ArbiterKeyboardHidClient {
     });
   }
 
-  /** Per-key actuation (`make`) and rapid-trigger (`break`) values in the firmware's own unit. */
+  /** Per-key actuation (`make`) and rapid-trigger (`break`) in tenths of a millimetre. */
   readTravel(): Promise<ArbiterKeyTravel[]> {
     return this.serialized(() => this.readTravelTable());
   }
 
   /**
    * Change travel for some keys and write the whole table back, preserving
-   * every other key. The firmware takes the table in full, so the current
+   * every other key. Values are tenths of a millimetre and must be inside the
+   * vendor app's ranges (actuation 1-38, rapid trigger 1-24); keys you do not
+   * touch are written back as read, whatever they hold. The firmware takes the table in full, so the current
    * values are read first; the write is confirmed by reading it back.
    */
   setKeyTravel(updates: readonly { index: number; make?: number; break?: number }[]): Promise<ArbiterKeyTravel[]> {
@@ -200,8 +203,8 @@ export class ArbiterKeyboardHidClient {
       for (const update of updates) {
         const key = next[update.index];
         if (!key) throw new RangeError(`Key ${update.index} is outside this keyboard's ${next.length}-key table.`);
-        if (update.make !== undefined) key.make = update.make;
-        if (update.break !== undefined) key.break = update.break;
+        if (update.make !== undefined) { assertArbiterTravelInRange("actuation", update.make); key.make = update.make; }
+        if (update.break !== undefined) { assertArbiterTravelInRange("rapidTrigger", update.break); key.break = update.break; }
       }
       const frames = this.travelFrames(next, total);
       for (const frame of frames) {

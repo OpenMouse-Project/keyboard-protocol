@@ -195,10 +195,22 @@ outstanding or 3 seconds have passed since the last.
 
 Each key has `triggerMake` and `triggerBreak`, one byte each. The UI maps
 `triggerMake` to actuation and `triggerBreak` to rapid trigger and defaults
-both to `10`. The unit and the allowed range are not stated in the bundle's
-protocol code. `soleMakeSet` and `soleBreakSet` are UI flags, not wire fields.
+both to `10`. `soleMakeSet` and `soleBreakSet` are UI flags, not wire fields.
 There is no separate press/release dead zone field and no per-key rapid trigger
 enable bit in these commands.
+
+**Unit: tenths of a millimetre.** The vendor app's one shared slider component
+(it has no per-model overrides) labels each value `(value) / 10` mm: its tooltip
+formatter is `` `${(max - position + 1) / 10} mm` `` and the stored wire value is
+`max - position + 1`, so the label equals `value / 10`. The actuation slider runs
+1-38 (0.1-3.8 mm) and the rapid trigger slider 1-24 (0.1-2.4 mm), in steps of 1.
+The default `10` is therefore 1.0 mm for both, and the PRO models' extra
+profiles default to 0.5 mm and 0.1 mm. The 4.0 mm of total switch travel is
+consistent with those limits. This is the vendor's own labelling, not a
+measurement on a keyboard, and the firmware's real limits are untested, so the
+driver holds writes to the vendor app's ranges and passes through whatever the
+keyboard reports for keys you do not touch (`arbiterTravelToMm`,
+`arbiterMmToTravel`, `assertArbiterTravelInRange`).
 
 ### Light effect (26 bytes)
 
@@ -266,7 +278,7 @@ not firmware behavior.
 | Surface | Commands | Behavior |
 | --- | --- | --- |
 | Identity | `GetFwVersion`, `GetDeviceSerialNo` | Firmware as `V{high}{low}` and the serial as the vendor app renders it. |
-| Travel | `GetMagSwitchTravel`, `SetMagSwitchTravel` | `readTravel()` walks every packet. `setKeyTravel()` reads the table, patches the chosen keys, writes every packet and reads the table back to confirm. Values are whole numbers 0-255 in the firmware's own unit. |
+| Travel | `GetMagSwitchTravel`, `SetMagSwitchTravel` | `readTravel()` walks every packet. `setKeyTravel()` reads the table, patches the chosen keys, writes every packet and reads the table back to confirm. Values are tenths of a millimetre, whole numbers within the vendor app's ranges (actuation 1-38, rapid trigger 1-24). |
 | Light effect | `GetLightEffect`, `SetLightEffect` | 26-byte payload with 7 colours, validated and confirmed by read-back. |
 | Key mapping | `GetKeyMapping`, `SetKeyMapping` | `readKeyBindings()` returns bindings by layer and wire entry; `setKeyBindings()` takes `{ layer, index, keyCode, param }`, patches the table, writes every packet and reads it back. `param` is written as 0 unless given, as the vendor app does; untouched keys keep theirs. Sizes are in [Table sizes](#table-sizes); the reply must report the expected packet total and entry count. |
 | Profile | `SetBoardProfile` | `setBoardProfile(n)` is bounded by the model's profile count and is only acknowledged; no read-back command was found. |
@@ -292,7 +304,9 @@ Behavior worth knowing:
 
 - Any hardware confirmation, including the PIDs above. They are bundle
   definitions, not seen on a connected keyboard.
-- Units and limits for `triggerMake`/`triggerBreak`.
+- Whether the firmware accepts travel values outside the vendor app's ranges, and
+  whether its real unit matches the vendor's `value / 10` mm label (no hardware
+  measurement yet).
 - What `colorIndex` selects.
 - Reply `status` handling on real firmware and whether a reply echoes the
   request's packet-type bits.
