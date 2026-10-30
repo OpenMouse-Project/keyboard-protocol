@@ -37,6 +37,7 @@ import type { RazerKeyboardState } from "@openmouse/keyboard-protocol/razer";
 import type { LogitechKeyboardState } from "@openmouse/keyboard-protocol/logitech";
 import type { SteelSeriesApexProfile } from "@openmouse/keyboard-protocol/steelseries";
 import type { KeychronHeFeatures } from "@openmouse/keyboard-protocol/keychron";
+import type { ArbiterKeyboardState } from "@openmouse/keyboard-protocol/arbiter";
 
 export interface KeyboardUiHints {
   /** Stable driver id, e.g. "wooting". */
@@ -240,4 +241,6 @@ export interface KeyboardStatus {
   keychron?: KeychronState | null;
   /** SteelSeries Apex Pro on-board analog profile (persisted snapshot). */
   steelseries?: { productId: number; profile: SteelSeriesApexProfile | null; verified: boolean } | null;
+  /** Arbiter Studio keyboard state (travel, light effect, SuperTap). */
+  arbiter?: ArbiterKeyboardState | null;
 }

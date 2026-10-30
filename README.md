@@ -47,6 +47,7 @@ filters, the driver registry, and shared status types live under
 | Logitech | `@openmouse/keyboard-protocol/logitech` |
 | SteelSeries | `@openmouse/keyboard-protocol/steelseries` |
 | Keychron (Hall-effect) | `@openmouse/keyboard-protocol/keychron` |
+| Arbiter Studio | `@openmouse/keyboard-protocol/arbiter` |
 
 Kochi Hummingbird 68 (`1CA2:0901`) supports reading and changing Windows/Mac
 mode on its `FFA0:1` USB configuration collection. Both directions and mode
@@ -98,6 +99,16 @@ Further Razer, Logitech and SteelSeries feature expansion is paused for now.
 The linked ledgers identify unsupported flows and hardware-validation gaps;
 the current implementations do not claim complete per-model feature coverage.
 
+
+### Arbiter Studio
+
+Polar 65, Nimbus 65, Polar 65 PRO and Polar 75 PRO (vendor ids `0x1A81` and
+`0x371C`, usage pages `0xFF01`/`0xFF02`) are implemented from the vendor's web
+configurator, not from hardware exercised through this package. Every catalog
+entry is `verified: false`. The driver reads identity, per-key travel, the light
+effect and SuperTap, and writes travel, light effects, SuperTap and key
+bindings (including the PRO models' FN layer) with read-back. See
+[the Arbiter ledger](docs/arbiter-support.md).
 
 ### BABAO60 HE validation status
 

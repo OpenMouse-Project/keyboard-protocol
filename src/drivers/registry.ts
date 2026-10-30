@@ -5,6 +5,7 @@ import { RazerKeyboardHidClient } from "./razer/hid.ts";
 import { LogitechKeyboardHidClient } from "./logitech/hid.ts";
 import { SteelSeriesKeyboardHidClient } from "./steelseries/hid.ts";
 import { KeychronHidClient } from "./keychron/hid.ts";
+import { ArbiterKeyboardHidClient } from "./arbiter/hid.ts";
 
 export type SupportedClient =
   | WootingHidClient
@@ -13,7 +14,8 @@ export type SupportedClient =
   | RazerKeyboardHidClient
   | LogitechKeyboardHidClient
   | SteelSeriesKeyboardHidClient
-  | KeychronHidClient;
+  | KeychronHidClient
+  | ArbiterKeyboardHidClient;
 
 export interface DeviceDriver {
   brand: string;
@@ -30,6 +32,7 @@ export const DEVICE_DRIVERS: readonly DeviceDriver[] = [
   { brand: "Logitech", supports: (device) => LogitechKeyboardHidClient.isSupported(device), create: (device) => new LogitechKeyboardHidClient(device), score: () => 6 },
   { brand: "SteelSeries", supports: (device) => SteelSeriesKeyboardHidClient.isSupported(device), create: (device) => new SteelSeriesKeyboardHidClient(device), score: () => 6 },
   { brand: "Keychron", supports: (device) => KeychronHidClient.isSupported(device), create: (device) => new KeychronHidClient(device), score: () => 6 },
+  { brand: "Arbiter Studio", supports: (device) => ArbiterKeyboardHidClient.isSupported(device), create: (device) => new ArbiterKeyboardHidClient(device), score: () => 6 },
 ];
 
 function driverFor(device: HIDDevice): DeviceDriver | undefined {

@@ -10,6 +10,7 @@
     "docs/logitech-support.md",
     "docs/steelseries-support.md",
     "docs/keychron-support.md",
+    "docs/arbiter-support.md",
     "README.md",
     "CONTRIBUTING.md"
   ],
@@ -53,6 +54,10 @@
     "./keychron": {
       "types": "./dist/keychron/index.d.ts",
       "import": "./dist/keychron/index.js"
+    },
+    "./arbiter": {
+      "types": "./dist/arbiter/index.d.ts",
+      "import": "./dist/arbiter/index.js"
     }
   },
   "scripts": {

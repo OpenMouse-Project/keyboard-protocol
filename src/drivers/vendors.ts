@@ -1,3 +1,9 @@
+import {
+  ARBITER_CONFIG_USAGE,
+  ARBITER_PRODUCTS,
+  ARBITER_VENDOR_ID,
+  ARBITER_VENDOR_ID_ALT,
+} from "@openmouse/keyboard-protocol/arbiter";
 import { KOCHI_VENDOR_ID, KOCHI_HB68_PRODUCT_ID, KOCHI_CONFIG_USAGE_PAGE, KOCHI_CONFIG_USAGE } from "@openmouse/keyboard-protocol/kochi";
 import {
   WOOTING_CONFIG_USAGE,
@@ -46,6 +52,8 @@ export const VENDOR_ID = {
   logitech: LOGITECH_VENDOR_ID,
   steelseries: STEELSERIES_VENDOR_ID,
   keychron: KEYCHRON_VENDOR_ID,
+  arbiter: ARBITER_VENDOR_ID,
+  arbiterAlt: ARBITER_VENDOR_ID_ALT,
 } as const;
 
 // Match the two command-capable collections rather than enumerating every
@@ -124,6 +132,19 @@ export const KEYCHRON_HID_FILTERS: HIDDeviceFilter[] = KEYCHRON_HE_PRODUCT_IDS.m
   usage: KEYCHRON_CONFIG_USAGE,
 }));
 
+/**
+ * Arbiter Studio keyboards expose one configuration collection per catalog
+ * entry. Each product id is paired with its own vendor id and usage page
+ * (0xFF01 or 0xFF02), because the same keyboard also presents boot-keyboard and
+ * consumer collections that would list it several times in the picker.
+ */
+export const ARBITER_HID_FILTERS: HIDDeviceFilter[] = ARBITER_PRODUCTS.map((entry) => ({
+  vendorId: entry.vendorId,
+  productId: entry.productId,
+  usagePage: entry.usagePage,
+  usage: ARBITER_CONFIG_USAGE,
+}));
+
 export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...KOCHI_HID_FILTERS,
   ...WOOTING_HID_FILTERS,
@@ -132,4 +153,5 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...LOGITECH_HID_FILTERS,
   ...STEELSERIES_HID_FILTERS,
   ...KEYCHRON_HID_FILTERS,
+  ...ARBITER_HID_FILTERS,
 ];
