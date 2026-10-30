@@ -356,7 +356,15 @@ export const keychronHeFrames = {
  * They share the same 32-byte raw-HID report as `KC_HE` but use their own
  * command ids (not 0xA9).
  */
-export const KEYCHRON_VIA_COMMAND = { getLayerCount: 0x11, getKeymapBuffer: 0x12 } as const;
+export const KEYCHRON_VIA_COMMAND = {
+  getProtocolVersion: 0x01,
+  getKeycode: 0x04,
+  setKeycode: 0x05,
+  getLayerCount: 0x11,
+  getKeymapBuffer: 0x12,
+  getEncoder: 0x14,
+  setEncoder: 0x15,
+} as const;
 /** Keys per keymap read: a reply carries up to 28 bytes, two per keycode. */
 export const KEYCHRON_KEYMAP_KEYS_PER_READ = 14;
 
@@ -386,7 +394,30 @@ function viaFrame(command: number, ...args: number[]): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+function viaByte(value: number, what: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > U8) throw new RangeError(`Invalid ${what}.`);
+  return value;
+}
+
+function viaCode(code: number): [number, number] {
+  if (!Number.isInteger(code) || code < 0 || code > 0xffff) throw new RangeError("Invalid keycode.");
+  return [code >> 8, code & U8];
+}
+
 export const keychronViaFrames = {
+  protocolVersion: () => viaFrame(KEYCHRON_VIA_COMMAND.getProtocolVersion),
+  /** Read one key's keycode. */
+  getKeycode: (layer: number, row: number, col: number) =>
+    viaFrame(KEYCHRON_VIA_COMMAND.getKeycode, viaByte(layer, "layer"), viaByte(row, "row"), viaByte(col, "column")),
+  /** Set one key's keycode (VIA dynamic_keymap_set_keycode). */
+  setKeycode(layer: number, row: number, col: number, code: number) {
+    return viaFrame(KEYCHRON_VIA_COMMAND.setKeycode, viaByte(layer, "layer"), viaByte(row, "row"), viaByte(col, "column"), ...viaCode(code));
+  },
+  getEncoder: (layer: number, encoder: number, clockwise: boolean) =>
+    viaFrame(KEYCHRON_VIA_COMMAND.getEncoder, viaByte(layer, "layer"), viaByte(encoder, "encoder"), clockwise ? 1 : 0),
+  setEncoder(layer: number, encoder: number, clockwise: boolean, code: number) {
+    return viaFrame(KEYCHRON_VIA_COMMAND.setEncoder, viaByte(layer, "layer"), viaByte(encoder, "encoder"), clockwise ? 1 : 0, ...viaCode(code));
+  },
   layerCount: () => viaFrame(KEYCHRON_VIA_COMMAND.getLayerCount),
   keymapBuffer(read: KeychronKeymapRead) {
     if (read.bytes < 2 || read.bytes > 28 || read.bytes % 2 !== 0) throw new RangeError("A keymap read carries 1-14 keycodes.");
@@ -398,6 +429,22 @@ export const keychronViaFrames = {
 export function isKeychronKeymapReply(report: Uint8Array, offset: number): boolean {
   return report.length >= 4 && report[0] === KEYCHRON_VIA_COMMAND.getKeymapBuffer
     && report[1] === offset >> 8 && report[2] === (offset & U8);
+}
+
+/** Protocol version reply: Launcher reads byte 2 (the low byte), treating 0 as 5. */
+export function decodeKeychronViaProtocol(report: Uint8Array): number | null {
+  return report.length >= 3 && report[0] === KEYCHRON_VIA_COMMAND.getProtocolVersion ? report[2]! || 5 : null;
+}
+
+/** True when `report` answers a get-keycode for this key. */
+export function isKeychronKeycodeReply(report: Uint8Array, layer: number, row: number, col: number): boolean {
+  return report.length >= 6 && report[0] === KEYCHRON_VIA_COMMAND.getKeycode
+    && report[1] === layer && report[2] === row && report[3] === col;
+}
+
+/** Keycode in a get-keycode reply: big-endian at bytes 4-5. */
+export function decodeKeychronKeycode(report: Uint8Array): number | null {
+  return report.length >= 6 && report[0] === KEYCHRON_VIA_COMMAND.getKeycode ? (report[4]! << 8) | report[5]! : null;
 }
 
 /** Layer count reply: byte 1. */
@@ -609,3 +656,4 @@ export function keychronHeAcknowledged(report: Uint8Array, subcommand: KeychronH
 export * from "./products.js";
 export * from "./layouts.js";
 export * from "./keycodes.js";
+export * from "./custom-keycodes.js";

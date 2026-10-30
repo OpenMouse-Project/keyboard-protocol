@@ -6,7 +6,10 @@ import {
   decodeKeychronProfilesInfo, decodeKeychronRealtimeTravel, isKeychronHeReply, isKeychronHeVersion,
   joinKeychronProfile, keychronHeAcknowledged, keychronHeFrames, keychronNameWindow,
   keychronProfileChunk, keychronProfileNameBytes, keychronKeymapReadPlan, keychronViaFrames,
-  isKeychronKeymapReply, decodeKeychronKeymapChunk, joinKeychronKeymap, decodeKeychronLayerCount, keychronProfileReadPlan,
+  isKeychronKeymapReply, decodeKeychronKeymapChunk, joinKeychronKeymap, decodeKeychronLayerCount,
+  decodeKeychronViaProtocol, decodeKeychronKeycode, isKeychronKeycodeReply, keychronKeycodeIsChoosable,
+  keychronKeycodeContext, keychronIsLayerKey,
+  type KeychronKeycodeContext, keychronProfileReadPlan,
   type KeychronAxisType, type KeychronCalibrationState, type KeychronCurve, type KeychronHeSubcommand,
   type KeychronHeVersion, type KeychronHeVersionInfo, type KeychronProfileBuffer, type KeychronProfilesInfo,
   type KeychronTravelSetting,
@@ -221,6 +224,73 @@ export class KeychronHidClient {
       const reply = await this.call(keychronHeFrames.saveProfile(info.current), KEYCHRON_HE_SUBCOMMAND.saveProfileBuffer);
       if (!keychronHeAcknowledged(reply, KEYCHRON_HE_SUBCOMMAND.saveProfileBuffer)) throw new Error("The keyboard did not save the profile.");
     });
+  }
+
+  private viaProtocol: number | null = null;
+
+  /** The VIA protocol version the board reports; it selects the keycode table. */
+  readViaProtocol(): Promise<number> {
+    return this.serialized(() => this.viaProtocolVersion());
+  }
+
+  private async viaProtocolVersion(): Promise<number> {
+    if (this.viaProtocol === null) {
+      const reply = await this.exchange(
+        keychronViaFrames.protocolVersion(), (frame) => decodeKeychronViaProtocol(frame) !== null, false,
+      );
+      this.viaProtocol = decodeKeychronViaProtocol(reply)!;
+    }
+    return this.viaProtocol;
+  }
+
+  /** Keycode context (protocol version and the board's custom keys) for legends and the picker. */
+  keycodeContext(): Promise<Required<KeychronKeycodeContext>> {
+    return this.serialized(async () => keychronKeycodeContext(this.device.productId, await this.viaProtocolVersion()));
+  }
+
+  private async readKey(layer: number, row: number, col: number): Promise<number> {
+    const reply = await this.exchange(
+      keychronViaFrames.getKeycode(layer, row, col), (frame) => isKeychronKeycodeReply(frame, layer, row, col), false,
+    );
+    return decodeKeychronKeycode(reply)!;
+  }
+
+  /**
+   * Set one key's keycode and confirm it by reading the key back. Launcher
+   * writes without waiting for a reply, so the read-back is what proves the
+   * board took it. The keycode must be one this module can name for the
+   * board's protocol version, so a layer or custom code is never sent with the
+   * wrong table. Persists in the board's memory.
+   */
+  setKeycode(layer: number, row: number, col: number, code: number): Promise<number> {
+    return this.serialized(async () => {
+      const product = this.matrix();
+      if (row >= product.rows || col >= product.cols) throw new RangeError("Key position is outside the board's matrix.");
+      const protocol = await this.viaProtocolVersion();
+      const context = keychronKeycodeContext(this.device.productId, protocol);
+      if (!keychronKeycodeIsChoosable(code, context)) throw new RangeError("That keycode is not valid for this board's firmware.");
+      await this.open();
+      await this.device.sendReport(KEYCHRON_REPORT_ID, keychronViaFrames.setKeycode(layer, row, col, code));
+      const confirmed = await this.readKey(layer, row, col);
+      if (confirmed !== code) throw new Error("The keyboard did not keep the new key assignment.");
+      return confirmed;
+    });
+  }
+
+  /**
+   * Warnings before replacing `row`,`col` on `layer` with `code`: replacing the
+   * last layer key that reaches other layers can strand keys on those layers.
+   */
+  async remapWarnings(layer: number, row: number, col: number, code: number): Promise<string[]> {
+    const protocol = await this.readViaProtocol();
+    const keymap = await this.readKeymap(layer);
+    const current = keymap[row]?.[col];
+    const warnings: string[] = [];
+    if (current !== undefined && keychronIsLayerKey(current, protocol) && !keychronIsLayerKey(code, protocol)) {
+      const others = keymap.flat().filter((value, index) => keychronIsLayerKey(value, protocol) && index !== row * keymap[0]!.length + col);
+      if (others.length === 0) warnings.push("This is the only layer key on this layer; replacing it removes the way to reach other layers from here.");
+    }
+    return warnings;
   }
 
   /** Number of keymap layers the board has. */

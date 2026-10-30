@@ -51,6 +51,27 @@ same way Launcher does. `keychronKeycodeLegend` labels basic keycodes,
 modifiers, layer keys and mod/layer-tap wrappers, and shows the hex value for
 anything else (custom or vendor codes).
 
+## Key remapping
+
+`KeychronHidClient.setKeycode(layer, row, col, code)` sets one key with the
+standard VIA `dynamic_keymap_set_keycode` command (`0x05`, big-endian code), as
+Launcher does, then reads the key back (`0x04`) and fails if the board did not
+keep it. Launcher itself does not wait for a reply, so the read-back is this
+driver's addition. Encoders use `0x15`/`0x14` (frames only; no driver method yet).
+
+The keycode tables depend on the VIA protocol version the board reports
+(`readViaProtocol`, command `0x01`): layer keys sit at `0x5200`/`0x5220`... on
+protocol 11 and later and at `0x5000`/`0x5100`... before that, and the custom
+(Keychron-specific) keys start at `0x7E00` (12+), `0x7F00` (11) or `0x5F80`.
+`setKeycode` only sends codes the table for the board's version can name, so a
+layer or custom code is never sent with the wrong table. `keychronKeycodeCatalog`
+builds the picker's categories from the same table, including the board's
+custom keys. `remapWarnings` flags replacing the only layer key on a layer.
+
+Not covered: macros, tap-dance and other quantum keycodes beyond the layer,
+mod-tap and layer-tap forms, encoder remapping in the driver, and resetting the
+keymap. A remap persists in the board's memory.
+
 ## Write parameters (from Launcher's call sites)
 
 - `workMode`: Global 0, Static 1, QuickTrigger (rapid trigger) 2.

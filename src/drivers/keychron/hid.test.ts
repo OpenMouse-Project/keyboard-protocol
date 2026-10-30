@@ -19,6 +19,10 @@ class FakeBoard {
   sent: Uint8Array[] = [];
   silent = false;
   silentVia = false;
+  viaProtocol = 12;
+  keymap = new Map<number, number>();
+  keycodeAt(layer: number, key: number) { return this.keymap.get(layer * 10_000 + key) ?? 4 + (key % 26); }
+  ignoreKeycodeWrites = false;
   nak = false;
   buffer = new Uint8Array(SIZE);
   version = 4;
@@ -37,12 +41,18 @@ class FakeBoard {
     assert.equal(request.length, 32);
     this.sent.push(request.slice());
     if (this.silent) return;
-    if (request[0] === 0x11 || request[0] === 0x12) {
+    if ([0x01, 0x04, 0x05, 0x11, 0x12].includes(request[0]!)) {
       if (this.silentVia) return;
       const via = new Uint8Array(32);
-      via.set(request.slice(0, 4));
-      if (request[0] === 0x11) via[1] = 4;
-      else for (let i = 0; i < request[3]!; i += 2) { const key = ((request[1]! << 8 | request[2]!) + i) / 2; via[4 + i] = 0; via[5 + i] = 4 + (key % 26); }
+      via.set(request.slice(0, 6));
+      if (request[0] === 0x01) via.set([0, this.viaProtocol], 1);
+      else if (request[0] === 0x11) via[1] = 4;
+      else if (request[0] === 0x05) { if (!this.ignoreKeycodeWrites) this.keymap.set(request[1]! * 10_000 + request[2]! * cols + request[3]!, request[4]! << 8 | request[5]!); return; }
+      else if (request[0] === 0x04) { const code = this.keycodeAt(request[1]!, request[2]! * cols + request[3]!); via[4] = code >> 8; via[5] = code & 0xff; }
+      else for (let i = 0; i < request[3]!; i += 2) {
+        const key = ((request[1]! << 8 | request[2]!) + i) / 2;
+        const code = this.keycodeAt(0, key); via[4 + i] = code >> 8; via[5 + i] = code & 0xff;
+      }
       this.emit(via);
       return;
     }
@@ -155,6 +165,41 @@ test("a board that ignores the keymap read keeps its session for HE commands", a
   await assert.rejects(() => keyboard.readLayerCount(), /did not answer/);
   assert.equal((await keyboard.readStatus()).brand, "Keychron");
   assert.equal(await keyboard.readKeyTravel(1, 1), 33);
+});
+
+test("setKeycode writes one key and confirms it by reading it back", async () => {
+  const board = new FakeBoard();
+  const keyboard = client(board);
+  assert.equal(await keyboard.readViaProtocol(), 12);
+  assert.equal(await keyboard.setKeycode(0, 1, 2, 0x2c), 0x2c); // Space
+  const write = board.sent.find((frame) => frame[0] === 0x05)!;
+  assert.deepEqual([...write.slice(0, 6)], [0x05, 0, 1, 2, 0x00, 0x2c]);
+  assert.equal((await keyboard.readKeymap(0))[1]![2], 0x2c);
+  await assert.rejects(() => keyboard.setKeycode(0, rows, 0, 4), RangeError);
+  await assert.rejects(() => keyboard.setKeycode(0, 0, 0, 0x7e40), /not valid/);
+});
+
+test("setKeycode fails loudly when the board does not keep the assignment", async () => {
+  const board = new FakeBoard();
+  board.ignoreKeycodeWrites = true;
+  await assert.rejects(() => client(board).setKeycode(0, 0, 0, 0x2c), /did not keep/);
+});
+
+test("older firmware uses the legacy layer-key table and rejects modern layer codes", async () => {
+  const board = new FakeBoard();
+  board.viaProtocol = 10;
+  const keyboard = client(board);
+  assert.equal(await keyboard.setKeycode(0, 0, 0, 0x5100), 0x5100); // MO(0) on the legacy table
+  await assert.rejects(() => keyboard.setKeycode(0, 0, 1, 0x5221), /not valid/); // modern MO(1) means something else
+});
+
+test("remapWarnings flags replacing the only layer key on a layer", async () => {
+  const board = new FakeBoard();
+  board.keymap.set(0, 0x5221); // MO(1), the only layer key on layer 0
+  const keyboard = client(board);
+  assert.equal((await keyboard.remapWarnings(0, 0, 0, 0x04)).length, 1);
+  assert.deepEqual(await keyboard.remapWarnings(0, 0, 0, 0x5223), []);
+  assert.deepEqual(await keyboard.remapWarnings(0, 0, 1, 0x04), []);
 });
 
 test("live travel matches the echoed key", async () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  KEYCHRON_HE_COMMAND, decodeKeychronKeymapChunk, joinKeychronKeymap, keychronKeycodeLegend, keychronKeymapReadPlan, keychronLayoutFor, keychronViaFrames, KEYCHRON_KEY_MODE, KEYCHRON_WORK_MODE, keychronKeyBitmap, keychronKeyTarget, keychronProfileNameBytes, KEYCHRON_HE_PRODUCTS, KEYCHRON_HE_PRODUCT_IDS, KEYCHRON_HE_SUBCOMMAND,
+  KEYCHRON_HE_COMMAND, keychronCustomKeycodeBase, keychronCustomKeycodes, keychronKeycodeCatalog, keychronKeycodeContext, keychronKeycodeIsChoosable, decodeKeychronViaProtocol, decodeKeychronKeycode, decodeKeychronKeymapChunk, joinKeychronKeymap, keychronKeycodeLegend, keychronKeymapReadPlan, keychronLayoutFor, keychronViaFrames, KEYCHRON_KEY_MODE, KEYCHRON_WORK_MODE, keychronKeyBitmap, keychronKeyTarget, keychronProfileNameBytes, KEYCHRON_HE_PRODUCTS, KEYCHRON_HE_PRODUCT_IDS, KEYCHRON_HE_SUBCOMMAND,
   decodeKeychronAxisType, decodeKeychronCalibrationState, decodeKeychronCurve, decodeKeychronHeVersion,
   decodeKeychronKeySlot, decodeKeychronProfileBuffer, decodeKeychronProfileName, decodeKeychronProfilesInfo,
   decodeKeychronRealtimeTravel, joinKeychronProfile, keychronHeAcknowledged, keychronHeFrames,
@@ -242,4 +242,57 @@ test("every catalogued board has a physical layout whose keys fit its matrix", (
     for (const key of layout.keys) assert.ok(key.row < rows && key.col < cols, `0x${id.toString(16)} [${key.row},${key.col}]`);
   }
   assert.equal(keychronLayoutFor(0x0001), null);
+});
+
+test("keycode tables follow the firmware protocol version", () => {
+  assert.equal(keychronKeycodeLegend(0x5221, { protocol: 12 }).label, "MO1");
+  assert.equal(keychronKeycodeLegend(0x5221, { protocol: 10 }).unknown, true);
+  assert.equal(keychronKeycodeLegend(0x5101, { protocol: 10 }).label, "MO1");
+  assert.equal(keychronKeycodeLegend(0x5101, { protocol: 12 }).unknown, true);
+  assert.equal(keychronCustomKeycodeBase(12), 0x7e00);
+  assert.equal(keychronCustomKeycodeBase(11), 0x7f00);
+  assert.equal(keychronCustomKeycodeBase(10), 0x5f80);
+  assert.equal(keychronKeycodeIsChoosable(0x04, { protocol: 5 }), true);
+  assert.equal(keychronKeycodeIsChoosable(0x10000), false);
+  assert.equal(keychronKeycodeIsChoosable(-1), false);
+});
+
+test("custom keycodes resolve through the board's own list", () => {
+  const id = KEYCHRON_HE_PRODUCT_IDS[0]!;
+  const custom = keychronCustomKeycodes(id);
+  assert.ok(custom.length > 0);
+  const context = keychronKeycodeContext(id, 12);
+  const legend = keychronKeycodeLegend(0x7e00, context);
+  assert.equal(legend.unknown, false);
+  assert.equal(legend.label, custom[0]!.shortName);
+  assert.equal(keychronKeycodeLegend(0x7e00, { protocol: 12 }).unknown, true);
+  assert.deepEqual(keychronCustomKeycodes(0x0001), []);
+});
+
+test("the catalog offers only codes the legend can name, with no duplicates per category", () => {
+  const id = KEYCHRON_HE_PRODUCT_IDS[0]!;
+  for (const protocol of [10, 11, 12]) {
+    const context = keychronKeycodeContext(id, protocol);
+    const catalog = keychronKeycodeCatalog({ ...context, layerCount: 4 });
+    assert.ok(catalog.some((category) => category.id === "letters"));
+    assert.ok(catalog.some((category) => category.id === "layers" && category.entries.length === 24));
+    for (const category of catalog) {
+      assert.equal(new Set(category.entries.map((entry) => entry.code)).size, category.entries.length, category.id);
+      for (const entry of category.entries) assert.equal(keychronKeycodeIsChoosable(entry.code, context), true, `${protocol} ${entry.code}`);
+    }
+  }
+  assert.equal(keychronKeycodeCatalog({ protocol: 12 }).some((category) => category.id === "keychron"), false);
+});
+
+test("VIA keycode frames and replies match the dynamic-keymap layout", () => {
+  assert.deepEqual([...keychronViaFrames.setKeycode(1, 2, 3, 0x1234).slice(0, 6)], [0x05, 1, 2, 3, 0x12, 0x34]);
+  assert.deepEqual([...keychronViaFrames.getKeycode(1, 2, 3).slice(0, 4)], [0x04, 1, 2, 3]);
+  assert.deepEqual([...keychronViaFrames.setEncoder(0, 1, true, 0x0004).slice(0, 6)], [0x15, 0, 1, 1, 0, 4]);
+  assert.throws(() => keychronViaFrames.setKeycode(0, 0, 256, 4), RangeError);
+  assert.throws(() => keychronViaFrames.setKeycode(0, 0, 0, 0x10000), RangeError);
+  const reply = new Uint8Array(32); reply.set([0x04, 1, 2, 3, 0x12, 0x34]);
+  assert.equal(decodeKeychronKeycode(reply), 0x1234);
+  const version = new Uint8Array(32); version.set([0x01, 0, 12]);
+  assert.equal(decodeKeychronViaProtocol(version), 12);
+  assert.equal(decodeKeychronViaProtocol(new Uint8Array(32).fill(0).map((_, i) => (i === 0 ? 1 : 0))), 5);
 });
