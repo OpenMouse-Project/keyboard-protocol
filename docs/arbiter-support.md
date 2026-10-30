@@ -47,8 +47,12 @@ Defaults in the bundle: every model starts on the `L_R_Surf` light effect with
 actuation `10` and rapid trigger `10`. The two PRO models also define profile 1
 (`Static`, actuation `5`, rapid trigger `5`) and profile 2 (`L_R_Surf` on the
 65 PRO and `Snake` on the 75 PRO, colour index `3`, actuation `1`, rapid
-trigger `1`). The key matrix has 68 keys on the 65s and the 65 PRO, and 82 on
-the 75 PRO (counted from the bundle's matrices).
+trigger `1`).
+
+The vendor's key matrices have 68 keys on the 65s and the 65 PRO, 70 on the
+`0xA006` board (one placeholder, `None`, at index 28) and 82 on the 75 PRO (a
+placeholder at the end). The wire tables are not always the matrix size; see
+[Table sizes](#table-sizes).
 
 ## Transport
 
@@ -79,7 +83,7 @@ classes (`hP`, `xP`); `i2` and `u2` extend the PRO classes (`PP`, `VP`).
 - **`i2` / `u2` (PRO models):**
   - Key mapping uses the same `GetKeyMapping`/`SetKeyMapping` commands as the
     65s, with 5 packets on the 65 PRO (2 layers x 68 keys = 136 pairs) and 6 on
-    the 75 PRO (2 layers x 82 keys = 164 pairs). The vendor app requests and
+    the 75 PRO (2 layers x 81 keys = 162 pairs). The vendor app requests and
     writes with that total in the packet header.
   - The table is flat: every key of layer 0 (`Main`), then every key of layer 1
     (`FN`). The vendor app derives the layer from `index >= keys`.
@@ -94,6 +98,27 @@ classes (`hP`, `xP`); `i2` and `u2` extend the PRO classes (`PP`, `VP`).
     without being asked.
 - `s2` differs from `yl` somewhere in code that was not diffed; treat it as a
   separate variant until it is.
+
+### Table sizes
+
+Each class's decoders were read to find how many entries are on the wire:
+
+| Class | Models | Travel entries | Key bindings per layer | Packets (travel / mapping) |
+| --- | --- | --- | --- | --- |
+| `yl` | 65s | 68 | 68 | 3 / 3 |
+| `s2` | `0x371C:0xA006` | 69 | 69 | 3 / 3 |
+| `i2` | 65 PRO | 68 | 68 (x2 layers) | 3 / 5 |
+| `u2` | 75 PRO | 82 | 81 (x2 layers) | 3 / 6 |
+
+- `s2` skips matrix index 28 (the `None` placeholder) when it writes travel and
+  both ways for key mapping, so its wire tables hold 69 of the matrix's 70
+  entries. Its travel *read* decoder does not skip index 28 while its travel
+  *write* does, so one of them is probably wrong in the vendor app; the driver
+  treats both as 69 wire entries and fails a read of any other size.
+- `u2` drops the matrix's final `None` entry from each key mapping layer (81 of
+  82) but keeps all 82 in the travel table.
+- The driver works in wire order and does not map entries to key positions; that
+  needs the vendor's matrices.
 
 ## Commands
 
@@ -180,7 +205,7 @@ not firmware behavior.
 | Identity | `GetFwVersion`, `GetDeviceSerialNo` | Firmware as `V{high}{low}` and the serial as the vendor app renders it. |
 | Travel | `GetMagSwitchTravel`, `SetMagSwitchTravel` | `readTravel()` walks every packet. `setKeyTravel()` reads the table, patches the chosen keys, writes every packet and reads the table back to confirm. Values are whole numbers 0-255 in the firmware's own unit. |
 | Light effect | `GetLightEffect`, `SetLightEffect` | 26-byte payload with 7 colours, validated and confirmed by read-back. |
-| Key mapping | `GetKeyMapping`, `SetKeyMapping` | `readKeyBindings()` returns bindings by layer and key; `setKeyBindings()` takes `{ layer, index, keyCode, param }`, patches the table, writes every packet and reads it back. 3 packets on the 65s, 5 on the 65 PRO, 6 on the 75 PRO (two layers); the reply must report that total. |
+| Key mapping | `GetKeyMapping`, `SetKeyMapping` | `readKeyBindings()` returns bindings by layer and wire entry; `setKeyBindings()` takes `{ layer, index, keyCode, param }`, patches the table, writes every packet and reads it back. `param` is written as 0 unless given, as the vendor app does; untouched keys keep theirs. Sizes are in [Table sizes](#table-sizes); the reply must report the expected packet total and entry count. |
 | Profile | `SetBoardProfile` | `setBoardProfile(n)` is bounded by the model's profile count and is only acknowledged; no read-back command was found. |
 | SuperTap | `GetUserMode`, `SetUserMode` | Models with `superTap` only; writes are confirmed by read-back. |
 | Notifications | `[0x04, 0xC9]` report | `onProfileChanged(listener)` fires when a PRO model announces a profile switch. |
@@ -210,11 +235,21 @@ Behavior worth knowing:
   request's packet-type bits.
 - `GetAllProfile`, board-profile switching semantics and how many profiles each
   model has.
-- Whether the PRO firmware honours the packet total in the request header (the
-  vendor app sends 5 or 6) or ignores it; the driver sends the vendor's totals
-  and rejects a reply that states a different one.
-- What the `param` byte of a binding means, and the FN layer's behaviour on the
-  keyboard.
+- Whether the firmware uses the packet total in the request header. The bundle
+  cannot answer it: every total the vendor app sends equals the true packet
+  count, so a firmware that reads the total and one that ignores it behave the
+  same for the app. Reads send the real total on the first request and echo the
+  reply's total afterwards; writes send a fixed per-model total (3, 5 or 6) on
+  every packet. The driver sends the same totals, so it does what the vendor app
+  does; sending a different total is untested and is not done.
+- What the `param` byte of a binding means. The vendor app only ever writes `0`:
+  every keyboard, media and mouse binding it can author has `param: 0`, and the
+  matrix defaults are all `0`. It only carries a nonzero value if the keyboard
+  itself reports one. The driver therefore writes `0` for a rebound key and
+  leaves other keys' values untouched.
+- The FN layer's behaviour on the keyboard itself.
+- Which of the `s2` travel read and write sizes is right (see
+  [Table sizes](#table-sizes)).
 - Wireless, Bluetooth and dongle transports. The bundle has per-transport
   header offsets (status at byte 2 or 3, id at 1 or 2, size at 3 or 5) and a
   19- and 32-byte frame length, but no device definition uses them.

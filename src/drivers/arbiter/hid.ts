@@ -177,7 +177,7 @@ export class ArbiterKeyboardHidClient {
 
   private readTravelTable(): Promise<ArbiterKeyTravel[]> {
     const product = this.requireProduct();
-    return this.readTable(ARBITER_COMMAND.getTravel, arbiterTravelPackets(product), product.keys, (reply) => {
+    return this.readTable(ARBITER_COMMAND.getTravel, arbiterTravelPackets(product), product.travelKeys, (reply) => {
       const packet = decodeArbiterTravelPacket(reply);
       return packet && { index: packet.index, total: packet.total, rows: packet.keys };
     });
@@ -256,7 +256,7 @@ export class ArbiterKeyboardHidClient {
 
   private async readKeyBindingTable(): Promise<ArbiterKeyBinding[]> {
     const product = this.requireProduct();
-    return this.readTable(ARBITER_COMMAND.getKeyMapping, arbiterKeyMappingPackets(product), product.keys * product.layers, (reply) => {
+    return this.readTable(ARBITER_COMMAND.getKeyMapping, arbiterKeyMappingPackets(product), product.bindingKeys * product.layers, (reply) => {
       const packet = decodeArbiterKeyMappingPacket(reply);
       return packet && { index: packet.index, total: packet.total, rows: packet.bindings };
     });
@@ -264,8 +264,8 @@ export class ArbiterKeyboardHidClient {
 
   /** The keyboard's flat table is every key of layer 0, then every key of layer 1. */
   private splitLayers(flat: readonly ArbiterKeyBinding[]): ArbiterKeyBinding[][] {
-    const { keys, layers } = this.requireProduct();
-    return Array.from({ length: layers }, (_, layer) => flat.slice(layer * keys, (layer + 1) * keys).map((b) => ({ ...b })));
+    const { bindingKeys, layers } = this.requireProduct();
+    return Array.from({ length: layers }, (_, layer) => flat.slice(layer * bindingKeys, (layer + 1) * bindingKeys).map((b) => ({ ...b })));
   }
 
   /** Key bindings by layer, then matrix key. The PRO models have a second (FN) layer. */
@@ -273,7 +273,11 @@ export class ArbiterKeyboardHidClient {
     return this.serialized(async () => this.splitLayers(await this.readKeyBindingTable()));
   }
 
-  /** Rebind some keys and write the whole table back, confirmed by read-back. `layer` defaults to 0. */
+  /**
+   * Rebind some keys and write the whole table back, confirmed by read-back.
+   * `layer` defaults to 0. `param` defaults to 0, which is what the vendor app
+   * writes for every binding it authors; keys you do not touch keep theirs.
+   */
   setKeyBindings(updates: readonly { layer?: number; index: number; keyCode: number; param?: number }[]): Promise<ArbiterKeyBinding[][]> {
     return this.serialized(async () => {
       const product = this.requireProduct();
@@ -282,9 +286,9 @@ export class ArbiterKeyboardHidClient {
       for (const update of updates) {
         const layer = update.layer ?? 0;
         const binding = layers[layer]?.[update.index];
-        if (!binding) throw new RangeError(`Key ${update.index} on layer ${layer} is outside this keyboard's ${product.layers}-layer, ${product.keys}-key table.`);
+        if (!binding) throw new RangeError(`Key ${update.index} on layer ${layer} is outside this keyboard's ${product.layers}-layer, ${product.bindingKeys}-key table.`);
         binding.keyCode = update.keyCode;
-        if (update.param !== undefined) binding.param = update.param;
+        binding.param = update.param ?? 0;
       }
       const flat = layers.flat();
       const frames: Uint8Array<ArrayBuffer>[] = [];

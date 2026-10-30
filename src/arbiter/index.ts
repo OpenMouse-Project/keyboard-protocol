@@ -57,8 +57,10 @@ export interface ArbiterProduct {
   productId: number;
   usagePage: number;
   protocol: ArbiterProtocol;
-  /** Keys per layer in the vendor's matrix. */
-  keys: number;
+  /** Entries in the travel table on the wire, in wire order. */
+  travelKeys: number;
+  /** Entries per layer in the key mapping table on the wire. */
+  bindingKeys: number;
   layers: number;
   profiles: number;
   superTap: boolean;
@@ -68,19 +70,29 @@ export interface ArbiterProduct {
 
 const product = (
   name: string, vendorId: number, productId: number, usagePage: number,
-  protocol: ArbiterProtocol, keys: number, layers: number, profiles: number, superTap: boolean,
-): ArbiterProduct => ({ name, vendorId, productId, usagePage, protocol, keys, layers, profiles, superTap, verified: false });
+  protocol: ArbiterProtocol, travelKeys: number, bindingKeys: number, layers: number, profiles: number, superTap: boolean,
+): ArbiterProduct => ({
+  name, vendorId, productId, usagePage, protocol, travelKeys, bindingKeys, layers, profiles, superTap, verified: false,
+});
 
-/** One entry per vendor id, product id and usage page the vendor bundle defines. */
+/**
+ * One entry per vendor id, product id and usage page the vendor bundle defines.
+ *
+ * Table sizes are wire entries, which can differ from the vendor's key matrix:
+ * the `s2` board's matrix has a placeholder at index 28 that its decoders skip
+ * (69 of 70 entries), and the 75 PRO's matrix ends in a placeholder that the
+ * key mapping decoders drop (81 of 82 per layer) while its travel table keeps
+ * all 82.
+ */
 export const ARBITER_PRODUCTS: readonly ArbiterProduct[] = [
-  product("Arbiter Polar 65", ARBITER_VENDOR_ID, 0x2072, 0xff01, "yl", 68, 1, 1, false),
-  product("Arbiter Polar 65", ARBITER_VENDOR_ID, 0x2072, 0xff02, "yl", 68, 1, 1, true),
-  product("Polar 65", ARBITER_VENDOR_ID, 0x208e, 0xff02, "yl", 68, 1, 1, true),
-  product("Nimbus 65", ARBITER_VENDOR_ID, 0x2077, 0xff01, "yl", 68, 1, 1, false),
-  product("Polar 65", ARBITER_VENDOR_ID_ALT, 0xa005, 0xff02, "yl", 68, 1, 1, true),
-  product("Arbiter Polar 65", ARBITER_VENDOR_ID_ALT, 0xa006, 0xff01, "s2", 68, 1, 1, true),
-  product("Polar 65 PRO", ARBITER_VENDOR_ID_ALT, 0xa003, 0xff02, "i2", 68, 2, 3, true),
-  product("Polar 75 PRO", ARBITER_VENDOR_ID_ALT, 0xa001, 0xff02, "u2", 82, 2, 3, true),
+  product("Arbiter Polar 65", ARBITER_VENDOR_ID, 0x2072, 0xff01, "yl", 68, 68, 1, 1, false),
+  product("Arbiter Polar 65", ARBITER_VENDOR_ID, 0x2072, 0xff02, "yl", 68, 68, 1, 1, true),
+  product("Polar 65", ARBITER_VENDOR_ID, 0x208e, 0xff02, "yl", 68, 68, 1, 1, true),
+  product("Nimbus 65", ARBITER_VENDOR_ID, 0x2077, 0xff01, "yl", 68, 68, 1, 1, false),
+  product("Polar 65", ARBITER_VENDOR_ID_ALT, 0xa005, 0xff02, "yl", 68, 68, 1, 1, true),
+  product("Arbiter Polar 65", ARBITER_VENDOR_ID_ALT, 0xa006, 0xff01, "s2", 69, 69, 1, 1, true),
+  product("Polar 65 PRO", ARBITER_VENDOR_ID_ALT, 0xa003, 0xff02, "i2", 68, 68, 2, 3, true),
+  product("Polar 75 PRO", ARBITER_VENDOR_ID_ALT, 0xa001, 0xff02, "u2", 82, 81, 2, 3, true),
 ];
 
 /** The catalog entry for an exact vendor id, product id and usage page. */
@@ -95,16 +107,16 @@ export function arbiterIsPro(entry: ArbiterProduct): boolean {
 
 /** Packets in a travel table: one `make, break` pair per key. */
 export function arbiterTravelPackets(entry: ArbiterProduct): number {
-  return Math.ceil(entry.keys / ARBITER_KEYS_PER_PACKET);
+  return Math.ceil(entry.travelKeys / ARBITER_KEYS_PER_PACKET);
 }
 
 /**
  * Packets in the key mapping table. The table is flat: every key of layer 0,
  * then every key of layer 1. The vendor app sends 3 packets on the 65s, 5 on the
- * 65 PRO (2 x 68 keys) and 6 on the 75 PRO (2 x 82 keys).
+ * 65 PRO (2 x 68 keys) and 6 on the 75 PRO (2 x 81 keys).
  */
 export function arbiterKeyMappingPackets(entry: ArbiterProduct): number {
-  return Math.ceil((entry.keys * entry.layers) / ARBITER_KEYS_PER_PACKET);
+  return Math.ceil((entry.bindingKeys * entry.layers) / ARBITER_KEYS_PER_PACKET);
 }
 
 /** `(85 - sum(bytes 0..62)) & 0xFF`, stored in the final byte. */
