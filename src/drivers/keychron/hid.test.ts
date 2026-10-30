@@ -34,9 +34,17 @@ class FakeBoard {
     assert.equal(reportId, 0);
     const request = data as Uint8Array;
     assert.equal(request.length, 32);
-    assert.equal(request[0], KEYCHRON_HE_COMMAND);
     this.sent.push(request.slice());
     if (this.silent) return;
+    if (request[0] === 0x11 || request[0] === 0x12) {
+      const via = new Uint8Array(32);
+      via.set(request.slice(0, 4));
+      if (request[0] === 0x11) via[1] = 4;
+      else for (let i = 0; i < request[3]!; i += 2) { const key = ((request[1]! << 8 | request[2]!) + i) / 2; via[4 + i] = 0; via[5 + i] = 4 + (key % 26); }
+      this.emit(via);
+      return;
+    }
+    assert.equal(request[0], KEYCHRON_HE_COMMAND);
     const reply = new Uint8Array(32);
     reply.set(request.slice(0, 2));
     switch (request[1]) {
@@ -124,6 +132,17 @@ test("renameProfile writes the name then saves", async () => {
   assert.equal(board.sent.at(-1)![1], SUB.saveProfileBuffer);
   await assert.rejects(() => client(board).renameProfile(7, "x"), RangeError);
   await assert.rejects(() => client(board).renameProfile(0, ""), RangeError);
+});
+
+test("readKeymap reads one layer through the VIA keymap command", async () => {
+  const board = new FakeBoard();
+  const keymap = await client(board).readKeymap(0);
+  assert.equal(keymap.length, rows);
+  assert.ok(keymap.every((row) => row.length === cols));
+  assert.deepEqual(keymap[0]!.slice(0, 3), [4, 5, 6]);
+  const reads = board.sent.filter((frame) => frame[0] === 0x12);
+  assert.equal(reads.length, Math.ceil(rows * cols / 14));
+  assert.equal(await client(board).readLayerCount(), 4);
 });
 
 test("live travel matches the echoed key", async () => {

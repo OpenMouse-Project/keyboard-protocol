@@ -351,6 +351,75 @@ export const keychronHeFrames = {
     frame(KEYCHRON_HE_SUBCOMMAND.resetSingleKey, profile(slot), row, col),
 } as const;
 
+/**
+ * The standard VIA/QMK dynamic-keymap commands Launcher uses to read legends.
+ * They share the same 32-byte raw-HID report as `KC_HE` but use their own
+ * command ids (not 0xA9).
+ */
+export const KEYCHRON_VIA_COMMAND = { getLayerCount: 0x11, getKeymapBuffer: 0x12 } as const;
+/** Keys per keymap read: a reply carries up to 28 bytes, two per keycode. */
+export const KEYCHRON_KEYMAP_KEYS_PER_READ = 14;
+
+export interface KeychronKeymapRead { offset: number; bytes: number }
+
+/**
+ * Reads that cover one layer of a `rows` x `cols` matrix. Offsets are bytes
+ * from the start of the keymap: `layer * rows * cols * 2 + 28 * chunk`.
+ */
+export function keychronKeymapReadPlan(layer: number, rows: number, cols: number): KeychronKeymapRead[] {
+  if (!Number.isInteger(layer) || layer < 0 || layer > U8) throw new RangeError("Invalid keymap layer.");
+  const keys = rows * cols;
+  const reads: KeychronKeymapRead[] = [];
+  for (let first = 0; first < keys; first += KEYCHRON_KEYMAP_KEYS_PER_READ) {
+    const count = Math.min(KEYCHRON_KEYMAP_KEYS_PER_READ, keys - first);
+    const offset = (layer * keys + first) * 2;
+    if (offset > 0xffff) throw new RangeError("Keymap offset exceeds the 16-bit address space.");
+    reads.push({ offset, bytes: count * 2 });
+  }
+  return reads;
+}
+
+function viaFrame(command: number, ...args: number[]): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(KEYCHRON_REPORT_SIZE);
+  out[0] = command;
+  args.forEach((value, index) => { out[index + 1] = value; });
+  return out;
+}
+
+export const keychronViaFrames = {
+  layerCount: () => viaFrame(KEYCHRON_VIA_COMMAND.getLayerCount),
+  keymapBuffer(read: KeychronKeymapRead) {
+    if (read.bytes < 2 || read.bytes > 28 || read.bytes % 2 !== 0) throw new RangeError("A keymap read carries 1-14 keycodes.");
+    return viaFrame(KEYCHRON_VIA_COMMAND.getKeymapBuffer, read.offset >> 8, read.offset & U8, read.bytes);
+  },
+} as const;
+
+/** True when `report` answers the keymap read at `offset`. */
+export function isKeychronKeymapReply(report: Uint8Array, offset: number): boolean {
+  return report.length >= 4 && report[0] === KEYCHRON_VIA_COMMAND.getKeymapBuffer
+    && report[1] === offset >> 8 && report[2] === (offset & U8);
+}
+
+/** Layer count reply: byte 1. */
+export function decodeKeychronLayerCount(report: Uint8Array): number | null {
+  return report.length >= 2 && report[0] === KEYCHRON_VIA_COMMAND.getLayerCount ? report[1]! : null;
+}
+
+/** Keycodes in a keymap reply: big-endian 16-bit values starting at byte 4. */
+export function decodeKeychronKeymapChunk(report: Uint8Array, bytes: number): number[] | null {
+  if (report.length < 4 + bytes || report[0] !== KEYCHRON_VIA_COMMAND.getKeymapBuffer) return null;
+  const codes: number[] = [];
+  for (let i = 0; i < bytes; i += 2) codes.push((report[4 + i]! << 8) | report[5 + i]!);
+  return codes;
+}
+
+/** Fold the chunks of one layer into `keycodes[row][col]`. */
+export function joinKeychronKeymap(chunks: readonly (readonly number[])[], rows: number, cols: number): number[][] {
+  const flat = chunks.flat();
+  if (flat.length < rows * cols) throw new RangeError("Keymap is shorter than its matrix.");
+  return Array.from({ length: rows }, (_, row) => flat.slice(row * cols, (row + 1) * cols));
+}
+
 /** True when `report` is an answer to the given HE subcommand. */
 export function isKeychronHeReply(report: Uint8Array, subcommand: KeychronHeSubcommand): boolean {
   return report.length >= 2 && report[0] === KEYCHRON_HE_COMMAND && report[1] === subcommand;
@@ -538,3 +607,5 @@ export function keychronHeAcknowledged(report: Uint8Array, subcommand: KeychronH
 }
 
 export * from "./products.js";
+export * from "./layouts.js";
+export * from "./keycodes.js";

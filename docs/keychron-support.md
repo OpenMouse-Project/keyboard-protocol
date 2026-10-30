@@ -37,7 +37,19 @@ been exercised, and note the gaps below before relying on a value.
 | Profiles | select, read and decode the whole buffer, save, clear, rename (28-byte UTF-16BE name, length byte `2 * chars`, then save) |
 | Advanced keys | DKS decode and write/remove, snap-tap decode and write, turbo/DKR/toggle slot decode |
 | Response | curve read/write, live per-key travel |
+| Layout and legends | physical key layout per board (`keychronLayoutFor`), keymap read through the standard VIA dynamic-keymap command (`readKeymap`, `readLayerCount`), and `keychronKeycodeLegend` for key labels |
 | Maintenance | calibration start/stop/state, switch axis type read/write, single-key reset, joystick mode |
+
+## Layouts and legends
+
+`src/keychron/layouts.ts` holds the physical key layout (position, size,
+rotation, knob index) for every catalogued board, 103 distinct layouts taken
+from Launcher's definitions with decorative art removed. The profile buffer has
+no key names, so legends come from the keymap: the driver reads it with VIA's
+`DYNAMIC_KEYMAP_GET_BUFFER` (0x12, 14 keys per read, big-endian keycodes), the
+same way Launcher does. `keychronKeycodeLegend` labels basic keycodes,
+modifiers, layer keys and mod/layer-tap wrappers, and shows the hex value for
+anything else (custom or vendor codes).
 
 ## Write parameters (from Launcher's call sites)
 

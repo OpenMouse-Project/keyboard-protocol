@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  KEYCHRON_HE_COMMAND, KEYCHRON_KEY_MODE, KEYCHRON_WORK_MODE, keychronKeyBitmap, keychronKeyTarget, keychronProfileNameBytes, KEYCHRON_HE_PRODUCTS, KEYCHRON_HE_PRODUCT_IDS, KEYCHRON_HE_SUBCOMMAND,
+  KEYCHRON_HE_COMMAND, decodeKeychronKeymapChunk, joinKeychronKeymap, keychronKeycodeLegend, keychronKeymapReadPlan, keychronLayoutFor, keychronViaFrames, KEYCHRON_KEY_MODE, KEYCHRON_WORK_MODE, keychronKeyBitmap, keychronKeyTarget, keychronProfileNameBytes, KEYCHRON_HE_PRODUCTS, KEYCHRON_HE_PRODUCT_IDS, KEYCHRON_HE_SUBCOMMAND,
   decodeKeychronAxisType, decodeKeychronCalibrationState, decodeKeychronCurve, decodeKeychronHeVersion,
   decodeKeychronKeySlot, decodeKeychronProfileBuffer, decodeKeychronProfileName, decodeKeychronProfilesInfo,
   decodeKeychronRealtimeTravel, joinKeychronProfile, keychronHeAcknowledged, keychronHeFrames,
@@ -190,4 +190,56 @@ test("profile names are trimmed big-endian UTF-16 with a byte length", () => {
   assert.throws(() => keychronProfileNameBytes("\u{1F600}"), RangeError);
   const frame = keychronHeFrames.setProfileName(2, chars, length);
   assert.deepEqual([...frame.slice(0, 8)], [0xa9, 0x13, 2, 6, 0, 0x48, 0, 0x69]);
+});
+
+test("keymap reads cover one layer in 14-key chunks at the right byte offsets", () => {
+  const plan = keychronKeymapReadPlan(1, 6, 5); // 30 keys: 14 + 14 + 2
+  assert.deepEqual(plan, [{ offset: 60, bytes: 28 }, { offset: 88, bytes: 28 }, { offset: 116, bytes: 4 }]);
+  assert.deepEqual([...keychronViaFrames.keymapBuffer(plan[1]!).slice(0, 4)], [0x12, 0, 88, 28]);
+  assert.throws(() => keychronKeymapReadPlan(256, 1, 1), RangeError);
+  assert.throws(() => keychronKeymapReadPlan(255, 20, 20), RangeError);
+  assert.throws(() => keychronViaFrames.keymapBuffer({ offset: 0, bytes: 30 }), RangeError);
+  assert.deepEqual([...keychronViaFrames.layerCount().slice(0, 2)], [0x11, 0]);
+});
+
+test("keymap replies are big-endian keycodes and fold into rows", () => {
+  const reply = new Uint8Array(32);
+  reply.set([0x12, 0, 0, 4, 0x00, 0x04, 0x00, 0x05]);
+  assert.deepEqual(decodeKeychronKeymapChunk(reply, 4), [4, 5]);
+  assert.equal(decodeKeychronKeymapChunk(new Uint8Array(32), 4), null);
+  assert.deepEqual(joinKeychronKeymap([[1, 2, 3], [4, 5, 6]], 2, 3), [[1, 2, 3], [4, 5, 6]]);
+  assert.throws(() => joinKeychronKeymap([[1]], 2, 3), RangeError);
+});
+
+test("legends cover letters, symbols, modifiers, layers and fall back to hex", () => {
+  const label = (code: number) => keychronKeycodeLegend(code).label;
+  assert.equal(label(0x04), "A");
+  assert.equal(label(0x1d), "Z");
+  assert.equal(label(0x1e), "1");
+  assert.equal(label(0x27), "0");
+  assert.equal(label(0x3a), "F1");
+  assert.equal(label(0x45), "F12");
+  assert.equal(label(0x68), "F13");
+  assert.equal(label(0x59), "1");
+  assert.equal(label(0x2c), "Space");
+  assert.equal(label(0xe1), "Shift");
+  assert.equal(label(0x0000), "");
+  assert.equal(label(0x0001), "▽");
+  assert.equal(label(0x5221), "MO1");
+  assert.equal(keychronKeycodeLegend(0x0204).title, "Shift+Key A");
+  assert.equal(label(0x2204), "A");
+  const unknown = keychronKeycodeLegend(0x7e40);
+  assert.equal(unknown.unknown, true);
+  assert.equal(unknown.label, "0x7E40");
+});
+
+test("every catalogued board has a physical layout whose keys fit its matrix", () => {
+  for (const id of KEYCHRON_HE_PRODUCT_IDS) {
+    const layout = keychronLayoutFor(id);
+    const { rows, cols } = KEYCHRON_HE_PRODUCTS[id]!;
+    assert.ok(layout, `layout for 0x${id.toString(16)}`);
+    assert.ok(layout.keys.length > 0 && layout.width > 0 && layout.height > 0);
+    for (const key of layout.keys) assert.ok(key.row < rows && key.col < cols, `0x${id.toString(16)} [${key.row},${key.col}]`);
+  }
+  assert.equal(keychronLayoutFor(0x0001), null);
 });

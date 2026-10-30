@@ -5,7 +5,8 @@ import {
   decodeKeychronCurve, decodeKeychronHeVersion, decodeKeychronProfileBuffer, decodeKeychronProfileName,
   decodeKeychronProfilesInfo, decodeKeychronRealtimeTravel, isKeychronHeReply, isKeychronHeVersion,
   joinKeychronProfile, keychronHeAcknowledged, keychronHeFrames, keychronNameWindow,
-  keychronProfileChunk, keychronProfileNameBytes, keychronProfileReadPlan,
+  keychronProfileChunk, keychronProfileNameBytes, keychronKeymapReadPlan, keychronViaFrames,
+  isKeychronKeymapReply, decodeKeychronKeymapChunk, joinKeychronKeymap, decodeKeychronLayerCount, keychronProfileReadPlan,
   type KeychronAxisType, type KeychronCalibrationState, type KeychronCurve, type KeychronHeSubcommand,
   type KeychronHeVersion, type KeychronHeVersionInfo, type KeychronProfileBuffer, type KeychronProfilesInfo,
   type KeychronTravelSetting,
@@ -217,6 +218,35 @@ export class KeychronHidClient {
       const info = await this.profilesInfo();
       const reply = await this.call(keychronHeFrames.saveProfile(info.current), KEYCHRON_HE_SUBCOMMAND.saveProfileBuffer);
       if (!keychronHeAcknowledged(reply, KEYCHRON_HE_SUBCOMMAND.saveProfileBuffer)) throw new Error("The keyboard did not save the profile.");
+    });
+  }
+
+  /** Number of keymap layers the board has. */
+  readLayerCount(): Promise<number> {
+    return this.serialized(async () => {
+      const count = decodeKeychronLayerCount(await this.exchange(
+        keychronViaFrames.layerCount(), (frame) => decodeKeychronLayerCount(frame) !== null,
+      ));
+      if (count === null) throw new Error("The keyboard did not report its layer count.");
+      return count;
+    });
+  }
+
+  /**
+   * Read one keymap layer as `keycodes[row][col]` using the standard VIA
+   * dynamic-keymap read. Pair it with `keychronKeycodeLegend` to label keys.
+   */
+  readKeymap(layer = 0): Promise<number[][]> {
+    return this.serialized(async () => {
+      const { rows, cols } = this.matrix();
+      const chunks: number[][] = [];
+      for (const read of keychronKeymapReadPlan(layer, rows, cols)) {
+        const reply = await this.exchange(keychronViaFrames.keymapBuffer(read), (frame) => isKeychronKeymapReply(frame, read.offset));
+        const codes = decodeKeychronKeymapChunk(reply, read.bytes);
+        if (!codes) throw new Error("The keyboard sent a short keymap reply.");
+        chunks.push(codes);
+      }
+      return joinKeychronKeymap(chunks, rows, cols);
     });
   }
 
