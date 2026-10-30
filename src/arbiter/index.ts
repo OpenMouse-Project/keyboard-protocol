@@ -57,6 +57,8 @@ export interface ArbiterProduct {
   productId: number;
   usagePage: number;
   protocol: ArbiterProtocol;
+  /** Keys per layer in the vendor's matrix. */
+  keys: number;
   layers: number;
   profiles: number;
   superTap: boolean;
@@ -66,19 +68,19 @@ export interface ArbiterProduct {
 
 const product = (
   name: string, vendorId: number, productId: number, usagePage: number,
-  protocol: ArbiterProtocol, layers: number, profiles: number, superTap: boolean,
-): ArbiterProduct => ({ name, vendorId, productId, usagePage, protocol, layers, profiles, superTap, verified: false });
+  protocol: ArbiterProtocol, keys: number, layers: number, profiles: number, superTap: boolean,
+): ArbiterProduct => ({ name, vendorId, productId, usagePage, protocol, keys, layers, profiles, superTap, verified: false });
 
 /** One entry per vendor id, product id and usage page the vendor bundle defines. */
 export const ARBITER_PRODUCTS: readonly ArbiterProduct[] = [
-  product("Arbiter Polar 65", ARBITER_VENDOR_ID, 0x2072, 0xff01, "yl", 1, 1, false),
-  product("Arbiter Polar 65", ARBITER_VENDOR_ID, 0x2072, 0xff02, "yl", 1, 1, true),
-  product("Polar 65", ARBITER_VENDOR_ID, 0x208e, 0xff02, "yl", 1, 1, true),
-  product("Nimbus 65", ARBITER_VENDOR_ID, 0x2077, 0xff01, "yl", 1, 1, false),
-  product("Polar 65", ARBITER_VENDOR_ID_ALT, 0xa005, 0xff02, "yl", 1, 1, true),
-  product("Arbiter Polar 65", ARBITER_VENDOR_ID_ALT, 0xa006, 0xff01, "s2", 1, 1, true),
-  product("Polar 65 PRO", ARBITER_VENDOR_ID_ALT, 0xa003, 0xff02, "i2", 2, 3, true),
-  product("Polar 75 PRO", ARBITER_VENDOR_ID_ALT, 0xa001, 0xff02, "u2", 2, 3, true),
+  product("Arbiter Polar 65", ARBITER_VENDOR_ID, 0x2072, 0xff01, "yl", 68, 1, 1, false),
+  product("Arbiter Polar 65", ARBITER_VENDOR_ID, 0x2072, 0xff02, "yl", 68, 1, 1, true),
+  product("Polar 65", ARBITER_VENDOR_ID, 0x208e, 0xff02, "yl", 68, 1, 1, true),
+  product("Nimbus 65", ARBITER_VENDOR_ID, 0x2077, 0xff01, "yl", 68, 1, 1, false),
+  product("Polar 65", ARBITER_VENDOR_ID_ALT, 0xa005, 0xff02, "yl", 68, 1, 1, true),
+  product("Arbiter Polar 65", ARBITER_VENDOR_ID_ALT, 0xa006, 0xff01, "s2", 68, 1, 1, true),
+  product("Polar 65 PRO", ARBITER_VENDOR_ID_ALT, 0xa003, 0xff02, "i2", 68, 2, 3, true),
+  product("Polar 75 PRO", ARBITER_VENDOR_ID_ALT, 0xa001, 0xff02, "u2", 82, 2, 3, true),
 ];
 
 /** The catalog entry for an exact vendor id, product id and usage page. */
@@ -87,9 +89,22 @@ export function arbiterProduct(vendorId: number, productId: number, usagePage: n
     entry.vendorId === vendorId && entry.productId === productId && entry.usagePage === usagePage);
 }
 
-/** The PRO models read key mappings with a different command; this package does not implement it yet. */
 export function arbiterIsPro(entry: ArbiterProduct): boolean {
   return entry.protocol === "i2" || entry.protocol === "u2";
+}
+
+/** Packets in a travel table: one `make, break` pair per key. */
+export function arbiterTravelPackets(entry: ArbiterProduct): number {
+  return Math.ceil(entry.keys / ARBITER_KEYS_PER_PACKET);
+}
+
+/**
+ * Packets in the key mapping table. The table is flat: every key of layer 0,
+ * then every key of layer 1. The vendor app sends 3 packets on the 65s, 5 on the
+ * 65 PRO (2 x 68 keys) and 6 on the 75 PRO (2 x 82 keys).
+ */
+export function arbiterKeyMappingPackets(entry: ArbiterProduct): number {
+  return Math.ceil((entry.keys * entry.layers) / ARBITER_KEYS_PER_PACKET);
 }
 
 /** `(85 - sum(bytes 0..62)) & 0xFF`, stored in the final byte. */

@@ -4,7 +4,8 @@ import {
   ARBITER_KEYS_PER_PACKET,
   ARBITER_PRODUCTS,
   ARBITER_REPORT_ID,
-  arbiterIsPro,
+  arbiterKeyMappingPackets,
+  arbiterTravelPackets,
   arbiterStatusName,
   decodeArbiterFirmware,
   decodeArbiterKeyMappingPacket,
@@ -33,8 +34,6 @@ import {
 } from "@openmouse/keyboard-protocol/arbiter";
 
 const REPLY_TIMEOUT_MS = 1500;
-/** Table reads request packet 0 of this many; the reply states the real total. */
-const FIRST_READ_TOTAL = 3;
 
 /** Arbiter Studio keyboards on their vendor configuration collection (usage page 0xFF01/0xFF02). */
 export class ArbiterKeyboardHidClient {
@@ -160,23 +159,25 @@ export class ArbiterKeyboardHidClient {
   /** Walk every packet of one table, checking that each reply is the index asked for. */
   private async readTable<T>(
     command: typeof ARBITER_COMMAND.getTravel | typeof ARBITER_COMMAND.getKeyMapping,
+    total: number,
+    expectedRows: number,
     decode: (reply: ArbiterReply) => { index: number; total: number; rows: T[] } | null,
-  ): Promise<{ total: number; rows: T[] }> {
+  ): Promise<T[]> {
     const rows: T[] = [];
-    let total = FIRST_READ_TOTAL;
     for (let index = 0; index < total; index += 1) {
       const reply = await this.exchange(command, encodeArbiterTableRead(command, index, total));
       const packet = decode(reply);
       if (!packet || packet.index !== index) throw new Error("The Arbiter keyboard returned an out-of-order table packet.");
-      if (index > 0 && packet.total !== total) throw new Error("The Arbiter keyboard changed its table size mid-read.");
-      total = packet.total;
+      if (packet.total !== total) throw new Error("The Arbiter keyboard reported an unexpected table size.");
       rows.push(...packet.rows);
     }
-    return { total, rows };
+    if (rows.length !== expectedRows) throw new Error(`The Arbiter keyboard returned ${rows.length} entries; expected ${expectedRows}.`);
+    return rows;
   }
 
-  private readTravelTable(): Promise<{ total: number; rows: ArbiterKeyTravel[] }> {
-    return this.readTable(ARBITER_COMMAND.getTravel, (reply) => {
+  private readTravelTable(): Promise<ArbiterKeyTravel[]> {
+    const product = this.requireProduct();
+    return this.readTable(ARBITER_COMMAND.getTravel, arbiterTravelPackets(product), product.keys, (reply) => {
       const packet = decodeArbiterTravelPacket(reply);
       return packet && { index: packet.index, total: packet.total, rows: packet.keys };
     });
@@ -184,7 +185,7 @@ export class ArbiterKeyboardHidClient {
 
   /** Per-key actuation (`make`) and rapid-trigger (`break`) values in the firmware's own unit. */
   readTravel(): Promise<ArbiterKeyTravel[]> {
-    return this.serialized(async () => (await this.readTravelTable()).rows);
+    return this.serialized(() => this.readTravelTable());
   }
 
   /**
@@ -194,16 +195,13 @@ export class ArbiterKeyboardHidClient {
    */
   setKeyTravel(updates: readonly { index: number; make?: number; break?: number }[]): Promise<ArbiterKeyTravel[]> {
     return this.serialized(async () => {
-      const { total, rows } = await this.readTravelTable();
-      const next = rows.map((key) => ({ ...key }));
+      const total = arbiterTravelPackets(this.requireProduct());
+      const next = (await this.readTravelTable()).map((key) => ({ ...key }));
       for (const update of updates) {
         const key = next[update.index];
         if (!key) throw new RangeError(`Key ${update.index} is outside this keyboard's ${next.length}-key table.`);
         if (update.make !== undefined) key.make = update.make;
         if (update.break !== undefined) key.break = update.break;
-      }
-      if (Math.ceil(next.length / ARBITER_KEYS_PER_PACKET) !== total) {
-        throw new Error("The Arbiter travel table does not fit the packet count the keyboard reported.");
       }
       const frames = this.travelFrames(next, total);
       for (const frame of frames) {
@@ -212,7 +210,7 @@ export class ArbiterKeyboardHidClient {
           throw new Error("The Arbiter keyboard did not acknowledge the travel write.");
         }
       }
-      const confirmed = (await this.readTravelTable()).rows;
+      const confirmed = await this.readTravelTable();
       if (confirmed.length !== next.length || confirmed.some((key, i) => key.make !== next[i]!.make || key.break !== next[i]!.break)) {
         throw new Error("The Arbiter keyboard did not retain the travel write.");
       }
@@ -256,45 +254,42 @@ export class ArbiterKeyboardHidClient {
     });
   }
 
-  private requireStandardMapping(): void {
-    if (arbiterIsPro(this.requireProduct())) {
-      throw new Error("Key mapping on the PRO models uses a command this package does not implement yet.");
-    }
-  }
-
-  private readKeyBindingTable(): Promise<{ total: number; rows: ArbiterKeyBinding[] }> {
-    return this.readTable(ARBITER_COMMAND.getKeyMapping, (reply) => {
+  private async readKeyBindingTable(): Promise<ArbiterKeyBinding[]> {
+    const product = this.requireProduct();
+    return this.readTable(ARBITER_COMMAND.getKeyMapping, arbiterKeyMappingPackets(product), product.keys * product.layers, (reply) => {
       const packet = decodeArbiterKeyMappingPacket(reply);
       return packet && { index: packet.index, total: packet.total, rows: packet.bindings };
     });
   }
 
-  /** Key bindings in matrix order (65 models only). */
-  readKeyBindings(): Promise<ArbiterKeyBinding[]> {
-    return this.serialized(async () => {
-      this.requireStandardMapping();
-      return (await this.readKeyBindingTable()).rows;
-    });
+  /** The keyboard's flat table is every key of layer 0, then every key of layer 1. */
+  private splitLayers(flat: readonly ArbiterKeyBinding[]): ArbiterKeyBinding[][] {
+    const { keys, layers } = this.requireProduct();
+    return Array.from({ length: layers }, (_, layer) => flat.slice(layer * keys, (layer + 1) * keys).map((b) => ({ ...b })));
   }
 
-  /** Rebind some keys and write the whole table back, confirmed by read-back (65 models only). */
-  setKeyBindings(updates: readonly { index: number; keyCode: number; param?: number }[]): Promise<ArbiterKeyBinding[]> {
+  /** Key bindings by layer, then matrix key. The PRO models have a second (FN) layer. */
+  readKeyBindings(): Promise<ArbiterKeyBinding[][]> {
+    return this.serialized(async () => this.splitLayers(await this.readKeyBindingTable()));
+  }
+
+  /** Rebind some keys and write the whole table back, confirmed by read-back. `layer` defaults to 0. */
+  setKeyBindings(updates: readonly { layer?: number; index: number; keyCode: number; param?: number }[]): Promise<ArbiterKeyBinding[][]> {
     return this.serialized(async () => {
-      this.requireStandardMapping();
-      const { total, rows } = await this.readKeyBindingTable();
-      const next = rows.map((binding) => ({ ...binding }));
+      const product = this.requireProduct();
+      const total = arbiterKeyMappingPackets(product);
+      const layers = this.splitLayers(await this.readKeyBindingTable());
       for (const update of updates) {
-        const binding = next[update.index];
-        if (!binding) throw new RangeError(`Key ${update.index} is outside this keyboard's ${next.length}-key table.`);
+        const layer = update.layer ?? 0;
+        const binding = layers[layer]?.[update.index];
+        if (!binding) throw new RangeError(`Key ${update.index} on layer ${layer} is outside this keyboard's ${product.layers}-layer, ${product.keys}-key table.`);
         binding.keyCode = update.keyCode;
         if (update.param !== undefined) binding.param = update.param;
       }
-      if (Math.ceil(next.length / ARBITER_KEYS_PER_PACKET) !== total) {
-        throw new Error("The Arbiter key table does not fit the packet count the keyboard reported.");
-      }
+      const flat = layers.flat();
       const frames: Uint8Array<ArrayBuffer>[] = [];
       for (let index = 0; index < total; index += 1) {
-        frames.push(encodeArbiterKeyMappingWrite(index, total, next.slice(index * ARBITER_KEYS_PER_PACKET, (index + 1) * ARBITER_KEYS_PER_PACKET)));
+        frames.push(encodeArbiterKeyMappingWrite(index, total, flat.slice(index * ARBITER_KEYS_PER_PACKET, (index + 1) * ARBITER_KEYS_PER_PACKET)));
       }
       for (const frame of frames) {
         const ack = await this.exchange(ARBITER_COMMAND.setKeyMapping, frame);
@@ -302,11 +297,11 @@ export class ArbiterKeyboardHidClient {
           throw new Error("The Arbiter keyboard did not acknowledge the key mapping write.");
         }
       }
-      const confirmed = (await this.readKeyBindingTable()).rows;
-      if (confirmed.length !== next.length || confirmed.some((b, i) => b.keyCode !== next[i]!.keyCode || b.param !== next[i]!.param)) {
+      const confirmed = await this.readKeyBindingTable();
+      if (confirmed.length !== flat.length || confirmed.some((b, i) => b.keyCode !== flat[i]!.keyCode || b.param !== flat[i]!.param)) {
         throw new Error("The Arbiter keyboard did not retain the key mapping write.");
       }
-      return confirmed;
+      return this.splitLayers(confirmed);
     });
   }
 
@@ -362,7 +357,7 @@ export class ArbiterKeyboardHidClient {
       const product = this.requireProduct();
       const firmwareVersion = await this.readFirmwareString();
       const serial = await this.readSerialString().catch(() => null);
-      const travel = await this.readTravelTable().then((table) => table.rows).catch(() => null);
+      const travel = await this.readTravelTable().catch(() => null);
       const light = await this.readLight().catch(() => null);
       const userMode = product.superTap ? await this.readUserModeValue().catch(() => null) : null;
       const arbiter: ArbiterKeyboardState = {

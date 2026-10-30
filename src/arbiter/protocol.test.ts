@@ -6,6 +6,8 @@ import {
   ARBITER_PRODUCTS,
   arbiterChecksum,
   arbiterIsPro,
+  arbiterKeyMappingPackets,
+  arbiterTravelPackets,
   arbiterPacketHeader,
   arbiterProduct,
   decodeArbiterFirmware,
@@ -153,6 +155,10 @@ test("the catalog matches the vendor bundle and is entirely unverified", () => {
   assert.equal(arbiterProduct(0x1a81, 0x2072, 0xff02)?.superTap, true);
   assert.equal(arbiterProduct(0x371c, 0xa006, 0xff01)?.protocol, "s2");
   assert.equal(arbiterProduct(0x371c, 0xa003, 0xff01), undefined);
+  assert.deepEqual(ARBITER_PRODUCTS.map((entry) => [entry.name, entry.keys, arbiterTravelPackets(entry), arbiterKeyMappingPackets(entry)]), [
+    ["Arbiter Polar 65", 68, 3, 3], ["Arbiter Polar 65", 68, 3, 3], ["Polar 65", 68, 3, 3], ["Nimbus 65", 68, 3, 3],
+    ["Polar 65", 68, 3, 3], ["Arbiter Polar 65", 68, 3, 3], ["Polar 65 PRO", 68, 3, 5], ["Polar 75 PRO", 82, 3, 6],
+  ]);
   assert.deepEqual(ARBITER_PRODUCTS.filter(arbiterIsPro).map((entry) => [entry.name, entry.layers, entry.profiles]),
     [["Polar 65 PRO", 2, 3], ["Polar 75 PRO", 2, 3]]);
 });

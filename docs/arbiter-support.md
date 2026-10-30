@@ -47,8 +47,8 @@ Defaults in the bundle: every model starts on the `L_R_Surf` light effect with
 actuation `10` and rapid trigger `10`. The two PRO models also define profile 1
 (`Static`, actuation `5`, rapid trigger `5`) and profile 2 (`L_R_Surf` on the
 65 PRO and `Snake` on the 75 PRO, colour index `3`, actuation `1`, rapid
-trigger `1`). The key matrix has 68 keys on the 65s; the PRO models use their
-own matrices, which were not counted.
+trigger `1`). The key matrix has 68 keys on the 65s and the 65 PRO, and 82 on
+the 75 PRO (counted from the bundle's matrices).
 
 ## Transport
 
@@ -77,9 +77,17 @@ classes (`hP`, `xP`); `i2` and `u2` extend the PRO classes (`PP`, `VP`).
   with `& 63`) and the status at byte 2 for USB. Key mapping is read and written
   with the long `GetKeyMapping`/`SetKeyMapping` commands.
 - **`i2` / `u2` (PRO models):**
-  - `GetKeyMappingPerKeys` (`29`) is also used to read the map.
-  - `SetKeyMapping` is sent in 5 packets on the 65 PRO and 6 on the 75 PRO.
-  - There are two layers (`Main`, `FN`) and three board profiles.
+  - Key mapping uses the same `GetKeyMapping`/`SetKeyMapping` commands as the
+    65s, with 5 packets on the 65 PRO (2 layers x 68 keys = 136 pairs) and 6 on
+    the 75 PRO (2 layers x 82 keys = 164 pairs). The vendor app requests and
+    writes with that total in the packet header.
+  - The table is flat: every key of layer 0 (`Main`), then every key of layer 1
+    (`FN`). The vendor app derives the layer from `index >= keys`.
+  - There are three board profiles.
+  - Both PRO classes also define a `GetKeyMappingPerKeys` (`29`) request (14
+    four-byte `[layer, keyIndex, 0, 0]` entries per packet), but nothing in the
+    bundle calls it. The UI loads key mappings with `GetKeyMapping`, so the
+    per-key command is treated as unused and is not implemented.
   - Their reply handler reads `byte 0` first. A report starting `0x04` with
     `byte 1 == 0xC9` raises the bundle's `OnProfileChanged` event, so the
     keyboard announces a profile switch (for example from the keyboard itself)
@@ -99,7 +107,7 @@ classes (`hP`, `xP`); `i2` and `u2` extend the PRO classes (`PP`, `VP`).
 | `SetLightEffect` | 24 | short | 26 bytes | data change flag |
 | `GetKeyMapping` | 27 | long | `index\|total<<4` | header, then `keyCode, param` per key per layer |
 | `SetKeyMapping` | 26 | long | header, then `keyCode, param` per key per layer (29 pairs per packet) | data change flag |
-| `GetKeyMappingPerKeys` | 29 | short | PRO classes only; `dataSize` is `14 * 4` | handled by the same mapping decoder |
+| `GetKeyMappingPerKeys` | 29 | short | defined on the PRO classes but never called by the bundle; not implemented | |
 | `GetAllProfile` | 35 | long | `index\|total<<4` (total 10) | requested packet by packet until `index == total - 1`; payload not decoded |
 | `SetBoardProfile` | 38 | short | one byte, the profile index | data change flag |
 | `GetUserMode` | 53 | short | none (`dataSize` 6) | 6 bytes, see SuperTap |
@@ -145,9 +153,9 @@ yellow, magenta, cyan), which matches the 26-byte length (5 + 21). What
 
 Each entry is `keyCode, param`. Key codes are the .NET `Keys` enum values the
 bundle uses for its labels (for example `242`/`245` Fn, `249` SuperTap,
-`250` Play), not USB HID usages. A second layer is addressed after the first
-(`index >= maxKeys` selects layer 1). The 65 models define only the `Main`
-layer in `keyMatrixLayer`. Layout variants are named `US, Nordic, UK, German,
+`250` Play), not USB HID usages. The table is flat with a second layer
+addressed after the first (`index >= keys` selects layer 1). The 65 models define
+only the `Main` layer in `keyMatrixLayer`; the PRO models add `FN`. Layout variants are named `US, Nordic, UK, German,
 French, Swedish, Japanese, Taiwanese, Korean, Russian, Portuguese,
 Spanish_Mexico, Spanish_Latam` (ids 1–13), but no command that reads or sets
 the layout was found.
@@ -172,7 +180,7 @@ not firmware behavior.
 | Identity | `GetFwVersion`, `GetDeviceSerialNo` | Firmware as `V{high}{low}` and the serial as the vendor app renders it. |
 | Travel | `GetMagSwitchTravel`, `SetMagSwitchTravel` | `readTravel()` walks every packet. `setKeyTravel()` reads the table, patches the chosen keys, writes every packet and reads the table back to confirm. Values are whole numbers 0-255 in the firmware's own unit. |
 | Light effect | `GetLightEffect`, `SetLightEffect` | 26-byte payload with 7 colours, validated and confirmed by read-back. |
-| Key mapping | `GetKeyMapping`, `SetKeyMapping` | 65 models only: `readKeyBindings()` and `setKeyBindings()` with the same read-patch-write-confirm flow. The PRO models refuse these calls. |
+| Key mapping | `GetKeyMapping`, `SetKeyMapping` | `readKeyBindings()` returns bindings by layer and key; `setKeyBindings()` takes `{ layer, index, keyCode, param }`, patches the table, writes every packet and reads it back. 3 packets on the 65s, 5 on the 65 PRO, 6 on the 75 PRO (two layers); the reply must report that total. |
 | Profile | `SetBoardProfile` | `setBoardProfile(n)` is bounded by the model's profile count and is only acknowledged; no read-back command was found. |
 | SuperTap | `GetUserMode`, `SetUserMode` | Models with `superTap` only; writes are confirmed by read-back. |
 | Notifications | `[0x04, 0xC9]` report | `onProfileChanged(listener)` fires when a PRO model announces a profile switch. |
@@ -200,15 +208,19 @@ Behavior worth knowing:
 - What `colorIndex` selects.
 - Reply `status` handling on real firmware and whether a reply echoes the
   request's packet-type bits.
-- `GetAllProfile`, `GetKeyMappingPerKeys`, board-profile switching semantics
-  and how many profiles each model has.
+- `GetAllProfile`, board-profile switching semantics and how many profiles each
+  model has.
+- Whether the PRO firmware honours the packet total in the request header (the
+  vendor app sends 5 or 6) or ignores it; the driver sends the vendor's totals
+  and rejects a reply that states a different one.
+- What the `param` byte of a binding means, and the FN layer's behaviour on the
+  keyboard.
 - Wireless, Bluetooth and dongle transports. The bundle has per-transport
   header offsets (status at byte 2 or 3, id at 1 or 2, size at 3 or 5) and a
   19- and 32-byte frame length, but no device definition uses them.
 - Firmware update, reset and calibration commands. None were found, and none
   are implemented.
-- Key mapping on the PRO models (`GetKeyMappingPerKeys`, 5- and 6-packet writes,
-  the FN layer) and reading `GetAllProfile`. The command shapes were seen but the
-  per-key read was not decoded, so the driver does not offer them.
+- `GetAllProfile` (requested by the bundle but its payload was not decoded) and
+  the unused `GetKeyMappingPerKeys`.
 - Press/release dead zones, per-key rapid trigger groups, key-travel streaming
   and macros. No corresponding command is defined in this bundle.

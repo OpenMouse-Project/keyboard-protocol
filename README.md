@@ -105,8 +105,8 @@ Polar 65, Nimbus 65, Polar 65 PRO and Polar 75 PRO (vendor ids `0x1A81` and
 `0x371C`, usage pages `0xFF01`/`0xFF02`) are implemented from the vendor's web
 configurator, not from hardware exercised through this package. Every catalog
 entry is `verified: false`. The driver reads identity, per-key travel, the light
-effect and SuperTap, and writes travel, light effects, SuperTap and 65-model key
-bindings with read-back. PRO key mapping is not implemented. See
+effect and SuperTap, and writes travel, light effects, SuperTap and key
+bindings (including the PRO models' FN layer) with read-back. See
 [the Arbiter ledger](docs/arbiter-support.md).
 
 ### BABAO60 HE validation status

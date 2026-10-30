@@ -12,6 +12,12 @@ import { ARBITER_HID_FILTERS, VENDOR_ID } from "../vendors.ts";
 
 const KEYS = 68;
 
+/** The fake is sized from a catalog model: keys per layer, layers and packet counts. */
+interface Shape { vendorId: number; productId: number; usagePage: number; keys: number; layers: number }
+const POLAR_65: Shape = { vendorId: 0x1a81, productId: 0x2072, usagePage: 0xff02, keys: 68, layers: 1 };
+const POLAR_65_PRO: Shape = { vendorId: 0x371c, productId: 0xa003, usagePage: 0xff02, keys: 68, layers: 2 };
+const POLAR_75_PRO: Shape = { vendorId: 0x371c, productId: 0xa001, usagePage: 0xff02, keys: 82, layers: 2 };
+
 /** A 68-key Polar 65 that answers the documented frames. */
 class FakeArbiterKeyboard {
   vendorId = 0x1a81;
@@ -21,13 +27,24 @@ class FakeArbiterKeyboard {
   collections: HIDCollectionInfo[] = [{ usagePage: 0xff02, usage: 1, inputReports: [], outputReports: [], featureReports: [], children: [] }];
   listeners = new Set<(event: HIDInputReportEvent) => void>();
   sent: Uint8Array[] = [];
-  travel = Array.from({ length: KEYS }, () => ({ make: 10, break: 10 }));
-  bindings = Array.from({ length: KEYS }, (_, i) => ({ keyCode: 27 + (i % 5), param: 0 }));
+  travel: { make: number; break: number }[] = Array.from({ length: KEYS }, () => ({ make: 10, break: 10 }));
+  bindings: { keyCode: number; param: number }[] = Array.from({ length: KEYS }, (_, i) => ({ keyCode: 27 + (i % 5), param: 0 }));
+  travelTotal = 3;
+  mappingTotal = 3;
   light: number[] = [1, 2, 100, 50, 0, ...new Array(21).fill(0)];
   userMode = [0, 1, 1, 0, 3, 4];
   status = 0;
   silent = false;
   forgetWrites = false;
+  constructor(shape: Shape = POLAR_65) {
+    this.vendorId = shape.vendorId;
+    this.productId = shape.productId;
+    this.collections[0]!.usagePage = shape.usagePage;
+    this.travel = Array.from({ length: shape.keys }, () => ({ make: 10, break: 10 }));
+    this.bindings = Array.from({ length: shape.keys * shape.layers }, (_, i) => ({ keyCode: 27 + (i % 5), param: i >= shape.keys ? 1 : 0 }));
+    this.travelTotal = Math.ceil(shape.keys / 29);
+    this.mappingTotal = Math.ceil((shape.keys * shape.layers) / 29);
+  }
   get hid(): HIDDevice { return this as unknown as HIDDevice; }
   async open() { this.opened = true; }
   async close() { this.opened = false; }
@@ -64,7 +81,7 @@ class FakeArbiterKeyboard {
       case ARBITER_COMMAND.getFirmware: return this.reply(command, bits, [5, 0, 0, 0, 0, 0, 0, 1]);
       case ARBITER_COMMAND.getSerial: return this.reply(command, bits, [0xab, 0x01, 0x02]);
       case ARBITER_COMMAND.getTravel:
-        return this.reply(command, bits, this.tablePacket(this.travel.map((k) => [k.make, k.break]), index, 3));
+        return this.reply(command, bits, this.tablePacket(this.travel.map((k) => [k.make, k.break]), index, this.travelTotal));
       case ARBITER_COMMAND.setTravel: {
         if (!this.forgetWrites) {
           for (let i = 1; i + 1 < data.length; i += 2) this.travel[index * 29 + (i - 1) / 2] = { make: data[i]!, break: data[i + 1]! };
@@ -72,7 +89,7 @@ class FakeArbiterKeyboard {
         return this.reply(command, bits, [1, 0, 0, 0]);
       }
       case ARBITER_COMMAND.getKeyMapping:
-        return this.reply(command, bits, this.tablePacket(this.bindings.map((b) => [b.keyCode, b.param]), index, 3));
+        return this.reply(command, bits, this.tablePacket(this.bindings.map((b) => [b.keyCode, b.param]), index, this.mappingTotal));
       case ARBITER_COMMAND.setKeyMapping: {
         if (!this.forgetWrites) {
           for (let i = 1; i + 1 < data.length; i += 2) this.bindings[index * 29 + (i - 1) / 2] = { keyCode: data[i]!, param: data[i + 1]! };
@@ -203,31 +220,71 @@ test("light effect writes are confirmed by read-back", async () => {
   await second.close();
 });
 
-test("key bindings are patched and confirmed on 65 models", async () => {
+test("65 models have one key binding layer and use three packets", async () => {
   const device = new FakeArbiterKeyboard();
   const client = new ArbiterKeyboardHidClient(device.hid);
   const before = await client.readKeyBindings();
-  assert.equal(before.length, KEYS);
+  assert.equal(before.length, 1);
+  assert.equal(before[0]!.length, KEYS);
   const after = await client.setKeyBindings([{ index: 10, keyCode: 65 }]);
-  assert.deepEqual(after[10], { keyCode: 65, param: 0 });
-  assert.deepEqual(after[11], before[11]);
+  assert.deepEqual(after[0]![10], { keyCode: 65, param: 0 });
+  assert.deepEqual(after[0]![11], before[0]![11]);
+  assert.equal(device.sent.filter((frame) => (frame[1]! & 0x3f) === ARBITER_COMMAND.setKeyMapping).length, 3);
   await assert.rejects(client.setKeyBindings([{ index: 99, keyCode: 1 }]), /outside/);
+  await assert.rejects(client.setKeyBindings([{ layer: 1, index: 0, keyCode: 1 }]), /outside/);
   await client.close();
 });
 
-test("PRO models refuse the key mapping commands this package has not implemented", async () => {
-  const device = new FakeArbiterKeyboard();
-  device.vendorId = 0x371c; device.productId = 0xa003;
+test("the 65 PRO reads and writes two layers across five packets", async () => {
+  const device = new FakeArbiterKeyboard(POLAR_65_PRO);
   const client = new ArbiterKeyboardHidClient(device.hid);
-  await assert.rejects(client.readKeyBindings(), /PRO models/);
-  await assert.rejects(client.setKeyBindings([{ index: 0, keyCode: 1 }]), /PRO models/);
-  assert.equal(device.sent.length, 0);
+  const before = await client.readKeyBindings();
+  assert.deepEqual(before.map((layer) => layer.length), [68, 68]);
+  assert.equal(before[1]![0]!.param, 1);
+  const reads = device.sent.filter((frame) => (frame[1]! & 0x3f) === ARBITER_COMMAND.getKeyMapping);
+  assert.deepEqual(reads.map((frame) => frame[4]), [0x50, 0x51, 0x52, 0x53, 0x54]);
+  const after = await client.setKeyBindings([{ layer: 1, index: 5, keyCode: 65 }, { layer: 0, index: 67, keyCode: 66, param: 2 }]);
+  assert.deepEqual(after[1]![5], { keyCode: 65, param: 1 });
+  assert.deepEqual(after[0]![67], { keyCode: 66, param: 2 });
+  assert.deepEqual(after[0]![5], before[0]![5]);
+  assert.equal(device.sent.filter((frame) => (frame[1]! & 0x3f) === ARBITER_COMMAND.setKeyMapping).length, 5);
+  await client.close();
+});
+
+test("the 75 PRO has 82 keys per layer and six mapping packets but three travel packets", async () => {
+  const device = new FakeArbiterKeyboard(POLAR_75_PRO);
+  const client = new ArbiterKeyboardHidClient(device.hid);
+  assert.deepEqual((await client.readKeyBindings()).map((layer) => layer.length), [82, 82]);
+  assert.equal(device.sent.filter((frame) => (frame[1]! & 0x3f) === ARBITER_COMMAND.getKeyMapping).length, 6);
+  assert.equal((await client.readTravel()).length, 82);
+  assert.equal(device.sent.filter((frame) => (frame[1]! & 0x3f) === ARBITER_COMMAND.getTravel).length, 3);
+  await client.setKeyBindings([{ layer: 1, index: 81, keyCode: 70 }]);
+  assert.equal(device.bindings[163]!.keyCode, 70);
+  await client.close();
+});
+
+test("a keyboard that reports the wrong table size or a short table is rejected", async () => {
+  const wrongTotal = new FakeArbiterKeyboard(POLAR_65_PRO);
+  wrongTotal.mappingTotal = 4;
+  const first = new ArbiterKeyboardHidClient(wrongTotal.hid);
+  await assert.rejects(first.readKeyBindings(), /unexpected table size/);
+  await first.close();
+  const short = new FakeArbiterKeyboard(POLAR_65);
+  short.travel = short.travel.slice(0, 60);
+  const second = new ArbiterKeyboardHidClient(short.hid);
+  await assert.rejects(second.readTravel(), /expected 68/);
+  await second.close();
+});
+
+test("a keyboard that ignores a key mapping write is reported", async () => {
+  const device = new FakeArbiterKeyboard(POLAR_65_PRO); device.forgetWrites = true;
+  const client = new ArbiterKeyboardHidClient(device.hid);
+  await assert.rejects(client.setKeyBindings([{ layer: 1, index: 0, keyCode: 65 }]), /did not retain/);
   await client.close();
 });
 
 test("profile switching is bounded and only acknowledged", async () => {
-  const device = new FakeArbiterKeyboard();
-  device.vendorId = 0x371c; device.productId = 0xa003;
+  const device = new FakeArbiterKeyboard(POLAR_65_PRO);
   const client = new ArbiterKeyboardHidClient(device.hid);
   await client.setBoardProfile(2);
   assert.deepEqual([...device.sent.at(-1)!.slice(0, 5)], [0, 38, 0, 1, 2]);
