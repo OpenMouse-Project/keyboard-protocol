@@ -36,6 +36,8 @@ class FakeArbiterKeyboard {
   userMode = [0, 1, 1, 0, 3, 4];
   status = 0;
   silent = false;
+  /** Stop answering after this many requests (-1 never). */
+  silentAfter = -1;
   forgetWrites = false;
   constructor(shape: Shape = POLAR_65) {
     this.vendorId = shape.vendorId;
@@ -73,7 +75,7 @@ class FakeArbiterKeyboard {
     assert.equal(request.length, 64);
     assert.equal(arbiterChecksum(request), request[63]);
     this.sent.push(request);
-    if (this.silent) return;
+    if (this.silent || (this.silentAfter >= 0 && this.sent.length > this.silentAfter)) return;
     const command = request[1]! & 0x3f;
     const bits = request[1]! & 0xc0;
     const data = request.slice(4, 4 + request[3]!);
@@ -331,6 +333,28 @@ test("a refused command surfaces the status name and requires a reconnect", asyn
   const client = new ArbiterKeyboardHidClient(device.hid);
   await assert.rejects(client.readTravel(), /NoSupport/);
   await assert.rejects(client.readTravel(), /Reconnect/);
+  await client.close();
+});
+
+test("status fails if the session dies during an optional read instead of returning nulls", async () => {
+  const device = new FakeArbiterKeyboard(); device.silentAfter = 1; // answers firmware, then nothing
+  const client = new ArbiterKeyboardHidClient(device.hid);
+  await assert.rejects(client.readStatus(), /did not answer/);
+  await assert.rejects(client.readStatus(), /Reconnect/);
+  await client.close();
+});
+
+test("an optional read that fails without killing the session leaves its field null", async () => {
+  const device = new FakeArbiterKeyboard();
+  const client = new ArbiterKeyboardHidClient(device.hid);
+  const original = device.sendReport.bind(device);
+  device.sendReport = async (reportId: number, buffer: BufferSource) => {
+    if (((buffer as Uint8Array)[1]! & 0x3f) === ARBITER_COMMAND.getLightEffect) { device.light = [1, 2]; } // wrong size
+    await original(reportId, buffer);
+  };
+  const status = await client.readStatus();
+  assert.equal(status.arbiter?.light, null);
+  assert.equal(status.arbiter?.travel?.length, KEYS);
   await client.close();
 });
 

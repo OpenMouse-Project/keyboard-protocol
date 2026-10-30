@@ -359,14 +359,28 @@ export class ArbiterKeyboardHidClient {
     });
   }
 
+  /**
+   * An optional status read that may fail without sinking the status, unless the
+   * failure killed the session: a timeout or refused command faults the client,
+   * and returning a "successful" status after that would hide the need to reconnect.
+   */
+  private async optionalRead<T>(read: () => Promise<T>): Promise<T | null> {
+    try {
+      return await read();
+    } catch (error) {
+      if (this.faulted) throw error;
+      return null;
+    }
+  }
+
   readStatus(): Promise<KeyboardStatus> {
     return this.serialized(async () => {
       const product = this.requireProduct();
       const firmwareVersion = await this.readFirmwareString();
-      const serial = await this.readSerialString().catch(() => null);
-      const travel = await this.readTravelTable().catch(() => null);
-      const light = await this.readLight().catch(() => null);
-      const userMode = product.superTap ? await this.readUserModeValue().catch(() => null) : null;
+      const serial = await this.optionalRead(() => this.readSerialString());
+      const travel = await this.optionalRead(() => this.readTravelTable());
+      const light = await this.optionalRead(() => this.readLight());
+      const userMode = product.superTap ? await this.optionalRead(() => this.readUserModeValue()) : null;
       const arbiter: ArbiterKeyboardState = {
         vendorId: product.vendorId,
         productId: product.productId,
