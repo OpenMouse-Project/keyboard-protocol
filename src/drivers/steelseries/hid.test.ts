@@ -197,6 +197,11 @@ test("OLED direct writes release control without changing on-board profile", asy
   await client.clearOledDirect();
   assert.ok(device.frames.some((entry) => entry.kind === "output" && entry.data[0] === 0x1f && entry.data[1] === 0x82));
   assert.equal((await client.readAnalogProfile()).oled?.[0], 0x11);
+  const pixels = new Uint8Array(128 * 40);
+  pixels[0] = 1;
+  await client.setOledDirectPixels(pixels);
+  const pixelFrame = device.frames.filter((entry) => entry.kind === "feature" && entry.data[0] === 0x1f && entry.data[1] === 0x81).at(-1);
+  assert.equal(pixelFrame?.data[2], 0x80);
   device.productId = 0x1642;
   await assert.rejects(client.setSecondActuation([4], 10), /only documented.*0x1628/);
   await assert.rejects(client.setRapidTapPairs([]), /only documented.*0x1628/);
@@ -215,6 +220,32 @@ test("direct lighting paints all 84 keys and clear hands control back", async ()
   assert.deepEqual(light?.data.slice(2, 6), [0x04, 255, 0, 0]);
   await client.clearLighting();
   assert.ok(device.frames.some((frame) => frame.kind === "output" && frame.data[0] === 0x41));
+  await client.close();
+});
+
+test("2023 wireless uses its lighting packet and rejects undocumented profile commands", async () => {
+  const device = new FakeSteelSeriesKeyboard();
+  device.productId = 0x1632;
+  const client = new SteelSeriesKeyboardHidClient(device as unknown as HIDDevice);
+  assert.equal(SteelSeriesKeyboardHidClient.isSupported(device as unknown as HIDDevice), true);
+  await client.setSolidLighting(1, 2, 3);
+  assert.equal(device.frames.find((frame) => frame.kind === "feature")?.data[0], 0x61);
+  await assert.rejects(client.readAnalogProfile(), /wireless on-board profile format/);
+  await assert.rejects(client.clearLighting(), /wireless direct-lighting release/);
+  await client.close();
+});
+
+test("partial direct lighting preserves previously painted keys", async () => {
+  const device = new FakeSteelSeriesKeyboard();
+  const client = new SteelSeriesKeyboardHidClient(device as unknown as HIDDevice);
+  await assert.rejects(client.setLighting(new Map([[0x04, [1, 2, 3]]])), /complete 84-key/);
+  assert.equal(device.frames.length, 0);
+  await client.setSolidLighting(255, 0, 0);
+  await client.setLighting(new Map([[0x04, [1, 2, 3]]]));
+  const lights = device.frames.filter((frame) => frame.kind === "feature" && frame.data[0] === 0x40);
+  assert.deepEqual(lights[1]?.data.slice(2, 10), [0x04, 1, 2, 3, 0x05, 255, 0, 0]);
+  await client.clearLighting();
+  await assert.rejects(client.setLighting(new Map([[0x04, [1, 2, 3]]])), /complete 84-key/);
   await client.close();
 });
 

@@ -19,6 +19,7 @@ import {
   encodeSteelseriesOledDirect,
   encodeSteelseriesOledDisplay,
   encodeSteelseriesOledResetDirect,
+  packSteelseriesOledPixels,
   encodeSteelseriesProfileRead,
   encodeSteelseriesRapidTap,
   encodeSteelseriesRapidTapPairs,
@@ -153,6 +154,20 @@ test("GG's profile and direct OLED commands preserve all 640 bitmap bytes", () =
   assert.throws(() => encodeSteelseriesOledDirect(bitmap.slice(1)), /640/);
 });
 
+test("live OLED pixels pack left to right, top to bottom, MSB first", () => {
+  const pixels = new Uint8Array(128 * 40);
+  pixels[0] = 1;
+  pixels[7] = 1;
+  pixels[128] = 1;
+  pixels[pixels.length - 1] = 1;
+  const bitmap = packSteelseriesOledPixels(pixels);
+  assert.equal(bitmap.length, 640);
+  assert.equal(bitmap[0], 0x81);
+  assert.equal(bitmap[16], 0x80);
+  assert.equal(bitmap[639], 0x01);
+  assert.throws(() => packSteelseriesOledPixels(new Uint8Array(639)), /128×40/);
+});
+
 test("profile reads encode file id, little-endian size and offset", () => {
   const frame = encodeSteelseriesProfileRead(0x80, 500, 0x1234);
   assert.equal(frame.length, STEELSERIES_FEATURE_DATA_LENGTH);
@@ -170,10 +185,10 @@ test("firmware polls and replies use the 0x90 command", () => {
   assert.equal(decodeSteelseriesFirmware(Uint8Array.from([0x91, 0x00])), null);
 });
 
-test("the Apex catalog marks nothing verified and carries five profile slots", () => {
+test("the Apex catalog marks nothing verified and limits wireless entries to lighting", () => {
   assert.equal(new Set(STEELSERIES_KEYBOARD_PRODUCT_IDS).size, STEELSERIES_KEYBOARD_PRODUCT_IDS.length);
-  for (const product of STEELSERIES_KEYBOARD_PRODUCTS.values()) {
+  for (const [productId, product] of STEELSERIES_KEYBOARD_PRODUCTS) {
     assert.equal(product.verified, false);
-    assert.equal(product.profileSlots, 5);
+    assert.equal(product.profileSlots, productId === 0x1630 || productId === 0x1632 ? 0 : 5);
   }
 });

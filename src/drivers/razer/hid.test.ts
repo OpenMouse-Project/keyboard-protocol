@@ -28,6 +28,7 @@ class FakeRazerKeyboard {
   pollingCode = 0x01;
   gameModeLed = false;
   ignoreGameModeWrites = false;
+  rapidTrigger = new Map<number, number[]>();
   denyFeatureReads: DOMException | null = null;
   writes: { transactionId: number; commandClass: number; commandId: number; args: number[] }[] = [];
   private listeners = new Set<(event: HIDInputReportEvent) => void>();
@@ -70,6 +71,11 @@ class FakeRazerKeyboard {
       this.nextReply = reply(RAZER_STATUS.ok, commandClass, commandId, []);
     } else if (commandClass === 0x0f && commandId === 0x03) {
       this.nextReply = reply(RAZER_STATUS.ok, commandClass, commandId, [], transactionId);
+    } else if (commandClass === 0x02 && commandId === 0x1a) {
+      this.rapidTrigger.set(args[2] ?? 0, args);
+      this.nextReply = reply(RAZER_STATUS.ok, commandClass, commandId, [], transactionId);
+    } else if (commandClass === 0x02 && commandId === 0x9a) {
+      this.nextReply = reply(RAZER_STATUS.ok, commandClass, commandId, this.rapidTrigger.get(args[2] ?? 0) ?? [], transactionId);
     } else if (commandClass === 0x03 && commandId === 0x0b) {
       this.nextReply = reply(RAZER_STATUS.ok, commandClass, commandId, [], transactionId);
     } else if (commandClass === 0x03 && commandId === 0x00) {
@@ -202,6 +208,47 @@ test("standard custom frame uses 0xff even when firmware discovery replies on 0x
   assert.equal(activation?.transactionId, 0xff);
   assert.deepEqual(activation?.args, [5, 0]);
   await client.close();
+});
+
+test("BlackWidow V3 uses distinct OpenRazer transactions for custom mode and rows", async () => {
+  const device = new FakeRazerKeyboard();
+  device.productId = 0x024e;
+  const client = new RazerKeyboardHidClient(device as unknown as HIDDevice);
+  await client.setCustomMatrixRow(0, 1, [[1, 2, 3]]);
+  await client.activateCustomMatrix();
+  assert.equal(device.writes.find((entry) => entry.commandId === 0x03)?.transactionId, 0x1f);
+  assert.equal(device.writes.find((entry) => entry.commandId === 0x02)?.transactionId, 0x3f);
+  await client.close();
+});
+
+test("Huntsman V3 rapid trigger writes the RAM slot and verifies the per-key reply", async () => {
+  const device = new FakeRazerKeyboard();
+  const client = new RazerKeyboardHidClient(device as unknown as HIDDevice);
+  await client.setRapidTrigger(0x1f, true, 0.4, 0.1);
+  const write = device.writes.find((entry) => entry.commandClass === 2 && entry.commandId === 0x1a);
+  assert.deepEqual(write?.args, [0, 0, 0x1f, 1, 0x19, 0x98, 0x06, 0x66]);
+  assert.equal(device.writes.some((entry) => entry.commandClass === 2 && entry.commandId === 0x9a), true);
+  await client.close();
+});
+
+test("Huntsman V3 profile rapid-trigger switch preserves stored distances", async () => {
+  const device = new FakeRazerKeyboard();
+  const client = new RazerKeyboardHidClient(device as unknown as HIDDevice);
+  await client.setRapidTriggerGlobal(true);
+  const write = device.writes.find((entry) => entry.commandClass === 2 && entry.commandId === 0x1a);
+  assert.deepEqual(write?.args, [0, 0, 0xff, 1, 0, 0, 0, 0]);
+  await client.close();
+});
+
+test("firmware rapid trigger refuses other models and invalid distances", async () => {
+  const device = new FakeRazerKeyboard();
+  device.productId = 0x0237;
+  const client = new RazerKeyboardHidClient(device as unknown as HIDDevice);
+  await assert.rejects(client.setRapidTrigger(0x1f, true, 0.4, 0.1), /not enabled/);
+  assert.equal(device.writes.length, 0);
+  device.productId = 0x02a6;
+  await assert.rejects(client.setRapidTrigger(0x1f, true, 0.01, 0.1), /distance/);
+  assert.equal(device.writes.length, 0);
 });
 
 test("game-mode LED uses model storage and its distinct transaction, then checks readback", async () => {

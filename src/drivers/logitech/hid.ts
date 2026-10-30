@@ -317,7 +317,28 @@ export class LogitechKeyboardHidClient {
     const info = decodeLogitechBrightnessInfo(await this.request(index, 0x00, [0x00, 0x00, 0x00]));
     const value = decodeLogitechBrightness(await this.request(index, 0x01, [0x00, 0x00, 0x00]));
     if (!info || value === null) return null;
-    return { value, ...info };
+    const illuminationEnabled = info.illumination
+      ? await this.request(index, 0x03, [0x00, 0x00, 0x00])
+        .then((params) => ((params[0] ?? 0) & 1) !== 0)
+        .catch(() => null)
+      : null;
+    return { value, ...info, illuminationEnabled };
+  }
+
+  /** Toggle the backlight without changing its stored brightness. */
+  async setIllumination(enabled: boolean): Promise<boolean> {
+    return this.serialized(async () => {
+      const index = await this.getFeature(LOGITECH_FEATURE.brightnessControl);
+      if (!index) throw new Error("This Logitech keyboard does not expose brightness control.");
+      const current = await this.readBrightness();
+      if (!current?.illumination) throw new Error("This Logitech keyboard does not advertise illumination control.");
+      await this.request(index, 0x04, [enabled ? 1 : 0, 0x00, 0x00]);
+      const confirmed = await this.request(index, 0x03, [0x00, 0x00, 0x00]);
+      if ((((confirmed[0] ?? 0) & 1) !== 0) !== enabled) {
+        throw new Error("The Logitech keyboard did not confirm the illumination change.");
+      }
+      return enabled;
+    });
   }
 
   async setBrightness(value: number): Promise<number> {
@@ -585,6 +606,38 @@ export class LogitechKeyboardHidClient {
       }
       await this.requestMode(index, 0x07, [persist ? 1 : 0, 0x00, 0x00, 0x00, 0x00, 0x00], true);
       return lighting;
+    });
+  }
+
+  /** Stage distinct colours for advertised 0x8081 zones and commit one frame. */
+  async setZoneColors(colors: readonly { zone: number; red: number; green: number; blue: number }[], persist = false): Promise<void> {
+    return this.serialized(async () => {
+      if (!colors.length) throw new RangeError("At least one zone colour is required.");
+      const index = await this.getFeature(LOGITECH_FEATURE.perKeyLightingV2);
+      if (!index) throw new Error("This Logitech keyboard does not expose 0x8081 per-key lighting.");
+      const lighting = await this.readLightingZones();
+      const available = new Set(lighting?.zones ?? []);
+      const seen = new Set<number>();
+      for (const color of colors) {
+        if (!Number.isInteger(color.zone) || color.zone <= 0 || color.zone >= 255 || !available.has(color.zone)) {
+          throw new RangeError(`The Logitech keyboard does not advertise lighting zone ${color.zone}.`);
+        }
+        if (seen.has(color.zone)) throw new RangeError(`Duplicate lighting zone ${color.zone}.`);
+        seen.add(color.zone);
+        for (const value of [color.red, color.green, color.blue]) {
+          if (!Number.isInteger(value) || value < 0 || value > 255) throw new RangeError("RGB channels must be whole numbers from 0 to 255.");
+        }
+      }
+      for (let offset = 0; offset < colors.length; offset += 4) {
+        const chunk = colors.slice(offset, offset + 4);
+        const frame = new Array(16).fill(0);
+        chunk.forEach((color, slot) => frame.splice(slot * 4, 4, color.zone, color.red, color.green, color.blue));
+        const response = await this.requestMode(index, 0x01, frame, true);
+        chunk.forEach((color, slot) => {
+          if (response[slot * 4] !== color.zone) throw new Error("The Logitech keyboard did not acknowledge the per-zone colour frame.");
+        });
+      }
+      await this.requestMode(index, 0x07, [persist ? 1 : 0, 0, 0, 0, 0], true);
     });
   }
 

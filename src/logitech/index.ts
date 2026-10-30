@@ -57,8 +57,9 @@ export interface LogitechKeyboardProduct {
 }
 
 /**
- * Keyboard product ids from G HUB's device catalog. Bluetooth (`b3xx`) and
- * regional (`40xx`) SKUs share the name with their wired (`c3xx`) sibling.
+ * Keyboard product ids from G HUB's device catalog, plus the separately
+ * identified RAPID PIDs. Bluetooth (`b3xx`) and regional (`40xx`) SKUs share
+ * the name with their wired (`c3xx`) sibling.
  */
 export const LOGITECH_KEYBOARD_PRODUCTS: ReadonlyMap<number, LogitechKeyboardProduct> = new Map([
   [0xc351, { name: "PRO X 60", wireless: true, verified: false }],
@@ -67,12 +68,14 @@ export const LOGITECH_KEYBOARD_PRODUCTS: ReadonlyMap<number, LogitechKeyboardPro
   [0xc352, { name: "PRO X TKL", wireless: true, verified: false }],
   [0xb382, { name: "PRO X TKL", wireless: true, verified: false }],
   [0x40b0, { name: "PRO X TKL", wireless: true, verified: false }],
+  [0xc35b, { name: "PRO X TKL RAPID", wireless: false, verified: false }],
   [0xc366, { name: "G316", wireless: false, verified: false }],
   [0xc361, { name: "G316 X", wireless: false, verified: false }],
   [0xc355, { name: "G515 LIGHTSPEED TKL", wireless: true, verified: false }],
   [0xb389, { name: "G515 LIGHTSPEED TKL", wireless: true, verified: false }],
   [0x40b4, { name: "G515 LIGHTSPEED TKL", wireless: true, verified: false }],
   [0xc358, { name: "G515 TKL", wireless: false, verified: false }],
+  [0xc363, { name: "G515 RAPID TKL", wireless: false, verified: false }],
   [0xc35a, { name: "G517 LIGHTSPEED TKL", wireless: true, verified: false }],
   [0xb390, { name: "G517 LIGHTSPEED TKL", wireless: true, verified: false }],
   [0x40b9, { name: "G517 LIGHTSPEED TKL", wireless: true, verified: false }],
@@ -312,6 +315,90 @@ export interface LogitechBrightnessInfo {
   /** Number of advertised brightness steps, not the size of one step. */
   steps: number;
   illumination: boolean;
+  /** Current backlight on/off state when the illumination capability is advertised. */
+  illuminationEnabled?: boolean | null;
+}
+
+/** G HUB exposes two actuation tag families with this row layout. */
+export const LOGITECH_ANALOG_ACTUATION_TAG_ID = 0x0123;
+export const LOGITECH_ANALOG_RAPID_TRIGGER_TAG_ID = 0x0124;
+export const LOGITECH_ANALOG_KEYS_TAG_ID = 0x1b08;
+
+/** G HUB's 0x8102 function-6 request prefix. */
+export function encodeLogitechTagStartRead(profile: number, tagId: number, args: readonly number[] = []): Uint8Array {
+  if (!Number.isInteger(profile) || profile < 0 || profile > 255 ||
+      !Number.isInteger(tagId) || tagId < 0 || tagId > 65535 ||
+      args.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+    throw new RangeError("Invalid Logitech tag read fields.");
+  }
+  return Uint8Array.from([profile, tagId >> 8, tagId & 0xff, ...args]);
+}
+
+/** G HUB's 0x8102 function-9 request prefix. */
+export function encodeLogitechTagStartWrite(tagId: number, length: number, args: readonly number[] = []): Uint8Array {
+  if (!Number.isInteger(tagId) || tagId < 0 || tagId > 65535 ||
+      !Number.isInteger(length) || length < 0 || length > 65535 ||
+      args.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+    throw new RangeError("Invalid Logitech tag write fields.");
+  }
+  return Uint8Array.from([tagId >> 8, tagId & 0xff, length >> 8, length & 0xff, ...args]);
+}
+
+/** G HUB's 0x8102 function-10 frame: fragment number plus up to 15 bytes. */
+export function encodeLogitechTagWriteFragment(index: number, data: Uint8Array): Uint8Array {
+  if (!Number.isInteger(index) || index < 0 || index > 255 || data.length > 15) {
+    throw new RangeError("Invalid Logitech tag fragment.");
+  }
+  const frame = new Uint8Array(16);
+  frame[0] = index;
+  frame.set(data, 1);
+  return frame;
+}
+
+export interface LogitechAnalogKeyTagRow {
+  controlIndex: number;
+  value: number;
+}
+
+/** Encode a 0x0123/0x0124/0x1B08 tag body; the session envelope is separate. */
+export function encodeLogitechAnalogKeyTagRows(rows: readonly LogitechAnalogKeyTagRow[]): Uint8Array {
+  const result = new Uint8Array(rows.length * 3);
+  rows.forEach(({ controlIndex, value }, index) => {
+    if (!Number.isInteger(controlIndex) || controlIndex < 0 || controlIndex > 255 ||
+        !Number.isInteger(value) || value < 0 || value > 65535) {
+      throw new RangeError("Analog tag rows require an 8-bit control index and a 16-bit value.");
+    }
+    result[index * 3] = controlIndex;
+    result[index * 3 + 1] = value >> 8;
+    result[index * 3 + 2] = value & 0xff;
+  });
+  return result;
+}
+
+export function decodeLogitechAnalogKeyTagRows(bytes: Uint8Array): LogitechAnalogKeyTagRow[] | null {
+  if (bytes.length % 3 !== 0) return null;
+  const rows: LogitechAnalogKeyTagRow[] = [];
+  for (let offset = 0; offset < bytes.length; offset += 3) {
+    rows.push({ controlIndex: bytes[offset] ?? 0, value: ((bytes[offset + 1] ?? 0) << 8) | (bytes[offset + 2] ?? 0) });
+  }
+  return rows;
+}
+
+/** Change one raw actuation row while retaining every other decoded row. */
+export function patchLogitechAnalogKeyTagRow(bytes: Uint8Array, controlIndex: number, value: number): Uint8Array {
+  const rows = decodeLogitechAnalogKeyTagRows(bytes);
+  if (!rows) throw new Error("Invalid Logitech analog key tag body.");
+  if (!Number.isInteger(controlIndex) || controlIndex < 0 || controlIndex > 255 ||
+      !Number.isInteger(value) || value < 0 || value > 65535) {
+    throw new RangeError("Analog tag rows require an 8-bit control index and a 16-bit value.");
+  }
+  if (new Set(rows.map((row) => row.controlIndex)).size !== rows.length) {
+    throw new Error("Duplicate Logitech analog key tag rows cannot be edited safely.");
+  }
+  const row = rows.find((entry) => entry.controlIndex === controlIndex);
+  if (row) row.value = value;
+  else rows.push({ controlIndex, value });
+  return encodeLogitechAnalogKeyTagRows(rows);
 }
 
 /** BrightnessControl `getInfo` + `getBrightness` replies. */

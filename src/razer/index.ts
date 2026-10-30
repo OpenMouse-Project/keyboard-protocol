@@ -93,17 +93,49 @@ export const RAZER_KEYBOARD_WRITE = {
  */
 export interface RazerCustomMatrixSupport {
   style: "extended" | "standard";
+  /** Custom-mode transaction; some models use a different one for row data. */
   transactionId: RazerTransactionId;
+  rowTransactionId?: RazerTransactionId;
 }
 
 export const RAZER_CUSTOM_MATRIX_SUPPORT: ReadonlyMap<number, RazerCustomMatrixSupport> = new Map([
+  [0x0226, { style: "extended", transactionId: 0x3f }], // Huntsman Elite
+  [0x0227, { style: "extended", transactionId: 0x3f }], // Huntsman
+  [0x0228, { style: "extended", transactionId: 0x1f }], // BlackWidow Elite
+  [0x022a, { style: "extended", transactionId: 0x3f }], // Cynosa Chroma
   [0x0237, { style: "standard", transactionId: 0xff }], // BlackWidow Essential
+  [0x0241, { style: "extended", transactionId: 0x3f }], // BlackWidow 2019
+  [0x0243, { style: "extended", transactionId: 0x3f }], // Huntsman TE
+  [0x024e, { style: "extended", transactionId: 0x3f, rowTransactionId: 0x1f }], // BlackWidow V3
+  [0x0257, { style: "extended", transactionId: 0x3f }], // Huntsman Mini
+  [0x025a, { style: "extended", transactionId: 0x3f, rowTransactionId: 0x1f }], // BlackWidow V3 Pro wired
+  [0x025c, { style: "extended", transactionId: 0x9f }], // BlackWidow V3 Pro wireless
+  [0x025d, { style: "extended", transactionId: 0x1f }], // Ornata V2
+  [0x025e, { style: "extended", transactionId: 0x1f }], // Cynosa V2
+  [0x0266, { style: "extended", transactionId: 0x1f }], // Huntsman V2 Analog
   [0x026b, { style: "extended", transactionId: 0x1f }], // Huntsman V2 Tenkeyless
   [0x026c, { style: "extended", transactionId: 0x1f }], // Huntsman V2
+  [0x0282, { style: "extended", transactionId: 0x1f }], // Huntsman Mini Analog
+  [0x028f, { style: "extended", transactionId: 0x1f }], // Ornata V3 alternate
+  [0x0290, { style: "extended", transactionId: 0x9f }], // DeathStalker V2 Pro wireless
+  [0x0292, { style: "extended", transactionId: 0x3f }], // DeathStalker V2 Pro wired
+  [0x0293, { style: "extended", transactionId: 0x1f }], // BlackWidow V4 X
+  [0x0294, { style: "extended", transactionId: 0x1f }], // Ornata V3 X
+  [0x0295, { style: "extended", transactionId: 0x3f }], // DeathStalker V2
+  [0x0296, { style: "extended", transactionId: 0x9f }], // DeathStalker V2 Pro TKL wireless
+  [0x0298, { style: "extended", transactionId: 0x3f }], // DeathStalker V2 Pro TKL wired
+  [0x02a1, { style: "extended", transactionId: 0x1f }], // Ornata V3
+  [0x02a2, { style: "extended", transactionId: 0x1f }], // Ornata V3 X alternate
+  [0x02a3, { style: "extended", transactionId: 0x1f }], // Ornata V3 TKL
   [0x02a6, { style: "extended", transactionId: 0x1f }], // Huntsman V3 Pro
   [0x02a7, { style: "extended", transactionId: 0x1f }], // Huntsman V3 Pro TKL
   [0x02b0, { style: "extended", transactionId: 0x1f }], // Huntsman V3 Pro Mini
+  [0x02b9, { style: "extended", transactionId: 0x1f }], // BlackWidow V4 Mini HyperSpeed wired
+  [0x02ba, { style: "extended", transactionId: 0x9f }], // BlackWidow V4 Mini HyperSpeed wireless
   [0x02cf, { style: "extended", transactionId: 0x1f }], // Huntsman V3 Pro 8KHz
+  [0x02d5, { style: "extended", transactionId: 0x9f }], // BlackWidow V4 TKL HyperSpeed wireless
+  [0x02d7, { style: "extended", transactionId: 0x1f }], // BlackWidow V4 TKL HyperSpeed wired
+  [0x0a24, { style: "extended", transactionId: 0x3f, rowTransactionId: 0x1f }], // BlackWidow V3 TK
 ]);
 
 /** GAME_LED (0x08): Huntsman V2 uses NOSTORE; the other listed boards use VARSTORE. */
@@ -116,6 +148,23 @@ export const RAZER_GAME_MODE_LED_SUPPORT: ReadonlyMap<number, { storage: 0 | 1; 
   [0x02b0, { storage: 1, transactionId: 0xff }],
   [0x02cf, { storage: 1, transactionId: 0xff }],
 ]);
+
+/** Huntsman V3 analog family; `02:1A`/`02:9A` are documented for these boards. */
+export const RAZER_FIRMWARE_RAPID_TRIGGER_PRODUCTS = new Set([0x02a6, 0x02a7, 0x02b0, 0x02cf]);
+
+/** V3 firmware stores one tenth millimetre as 1638 big-endian units. */
+export function razerRapidTriggerUnits(mm: number): number {
+  if (!Number.isFinite(mm) || mm < 0.1 || mm > 1.0) throw new RangeError("Rapid-trigger distance must be from 0.1 to 1.0 mm.");
+  return Math.round(mm * 16380);
+}
+
+export function encodeRazerRapidTrigger(key: number, enabled: boolean, upMm: number, downMm: number): RazerCommand {
+  if (!Number.isInteger(key) || key < 1 || key > 255) throw new RangeError("Razer firmware key ID must be 1–255.");
+  const up = razerRapidTriggerUnits(upMm);
+  const down = razerRapidTriggerUnits(downMm);
+  return { commandClass: 0x02, commandId: 0x1a, dataSize: 8,
+    args: [0, 0, key, enabled ? 1 : 0, up >> 8, up & 0xff, down >> 8, down & 0xff] };
+}
 
 export interface RazerKeyboardProduct {
   name: string;

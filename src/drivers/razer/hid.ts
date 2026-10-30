@@ -3,6 +3,7 @@ import {
   RAZER_KEYBOARD_PRODUCTS,
   RAZER_CUSTOM_MATRIX_SUPPORT,
   RAZER_GAME_MODE_LED_SUPPORT,
+  RAZER_FIRMWARE_RAPID_TRIGGER_PRODUCTS,
   RAZER_KEYBOARD_READ,
   RAZER_KEYBOARD_WRITE,
   RAZER_POLLING_RATES,
@@ -20,6 +21,7 @@ import {
   encodeRazerCustomMatrixEffect,
   encodeRazerCustomMatrixRow,
   encodeRazerGameModeLed,
+  encodeRazerRapidTrigger,
   encodeRazerAnalogBinding,
   encodeRazerMatrixEffect,
   encodeRazerStandardBinding,
@@ -299,7 +301,7 @@ export class RazerKeyboardHidClient {
       if (!support) throw new Error("Custom matrix rows are not enabled for this Razer model.");
       const command = encodeRazerCustomMatrixRow(support.style, row, startColumn, colors);
       await this.open();
-      await this.exchange(command, support.transactionId);
+      await this.exchange(command, support.rowTransactionId ?? support.transactionId);
     });
   }
 
@@ -365,6 +367,40 @@ export class RazerKeyboardHidClient {
     return this.serialized(async () => {
       await this.open();
       await this.exchange(encodeRazerAnalogBinding(slot, key, fnLayer, actuation, release, binding));
+    });
+  }
+
+  /** Set V3 firmware rapid trigger for one firmware key ID in RAM profile 0. */
+  async setRapidTrigger(key: number, enabled: boolean, upMm: number, downMm: number): Promise<void> {
+    return this.serialized(async () => {
+      if (!RAZER_FIRMWARE_RAPID_TRIGGER_PRODUCTS.has(this.device.productId)) {
+        throw new Error("Firmware rapid trigger is not enabled for this Razer model.");
+      }
+      const command = encodeRazerRapidTrigger(key, enabled, upMm, downMm);
+      await this.open();
+      await this.exchange(command);
+      const actual = await this.exchange({ commandClass: 0x02, commandId: 0x9a, dataSize: 3, args: [0, 0, key] });
+      const expected = command.args ?? [];
+      if (actual.length < 8 || expected.some((value, offset) => actual[offset] !== value)) {
+        throw new Error("The Razer keyboard did not confirm the rapid-trigger settings.");
+      }
+    });
+  }
+
+  /** Toggle the V3 profile-wide rapid-trigger switch; firmware ID FF also affects every key. */
+  async setRapidTriggerGlobal(enabled: boolean): Promise<void> {
+    return this.serialized(async () => {
+      if (!RAZER_FIRMWARE_RAPID_TRIGGER_PRODUCTS.has(this.device.productId)) {
+        throw new Error("Firmware rapid trigger is not enabled for this Razer model.");
+      }
+      await this.open();
+      await this.exchange({ commandClass: 0x02, commandId: 0x1a, dataSize: 8,
+        args: [0, 0, 0xff, enabled ? 1 : 0, 0, 0, 0, 0] });
+      const actual = await this.exchange({ commandClass: 0x02, commandId: 0x9a, dataSize: 3,
+        args: [0, 0, 0xff] });
+      if (actual.length < 4 || actual[2] !== 0xff || actual[3] !== Number(enabled)) {
+        throw new Error("The Razer keyboard did not confirm the rapid-trigger switch.");
+      }
     });
   }
 

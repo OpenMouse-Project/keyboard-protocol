@@ -22,6 +22,7 @@ import {
   encodeSteelseriesOledDirect,
   encodeSteelseriesOledDisplay,
   encodeSteelseriesOledResetDirect,
+  packSteelseriesOledPixels,
   encodeSteelseriesProfileRead,
   encodeSteelseriesProfileWrite,
   encodeSteelseriesRapidTap,
@@ -51,6 +52,13 @@ export class SteelSeriesKeyboardHidClient {
   private cachedProfile: SteelSeriesApexProfile | null = null;
 
   private cachedBlob: Uint8Array | null = null;
+  private directLighting: Map<number, SteelSeriesRgb> | null = null;
+  private get wireless2023(): boolean {
+    return this.device.productId === 0x1630 || this.device.productId === 0x1632;
+  }
+  private lightingPacketId(): 0x40 | 0x61 {
+    return this.wireless2023 ? 0x61 : 0x40;
+  }
   private requireTkl2023(): void {
     if (this.device.productId !== STEELSERIES_APEX_PRO_2023_PRODUCT_ID) {
       throw new Error("This command is only documented for the wired Apex Pro TKL 0x1628.");
@@ -102,6 +110,7 @@ export class SteelSeriesKeyboardHidClient {
   }
 
   async close(): Promise<void> {
+    this.directLighting = null;
     this.firmwareWaiter?.resolve(new Uint8Array());
     this.firmwareWaiter = null;
     if (this.listening) this.device.removeEventListener("inputreport", this.onInputReport);
@@ -148,6 +157,7 @@ export class SteelSeriesKeyboardHidClient {
   }
 
   private async readProfileBlob(slot: number): Promise<Uint8Array> {
+    if (this.wireless2023) throw new Error("The 2023 wireless on-board profile format is not documented for this driver.");
     await this.open();
     const fsId = STEELSERIES_FIRST_PROFILE_FS + slot;
     const chunks: Uint8Array[] = [];
@@ -178,6 +188,7 @@ export class SteelSeriesKeyboardHidClient {
   }
 
   private async writeProfileBlob(slot: number, blob: Uint8Array): Promise<void> {
+    if (this.wireless2023) throw new Error("The 2023 wireless on-board profile format is not documented for this driver.");
     await this.open();
     const fsId = STEELSERIES_FIRST_PROFILE_FS + slot;
     await this.device.sendReport(OUTPUT_REPORT_ID, encodeSteelseriesFileOpen(fsId));
@@ -238,11 +249,23 @@ export class SteelSeriesKeyboardHidClient {
     return decoded;
   }
 
-  /** Paint every addressable key through the 2023 direct-lighting frame. */
+  /** Update keys in the current direct-lighting frame, or provide all 84 keys initially. */
   async setLighting(colors: ReadonlyMap<number, SteelSeriesRgb>): Promise<void> {
     return this.serialized(async () => {
+      const next = new Map(this.directLighting ?? []);
+      for (const [usage, color] of colors) {
+        if (!STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.includes(usage)) {
+          throw new RangeError(`SteelSeries key ${usage} has no direct-lighting zone.`);
+        }
+        next.set(usage, color);
+      }
+      if (next.size !== STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.length) {
+        throw new Error("A complete 84-key lighting frame is required before partial updates can preserve other colours.");
+      }
+      const frame = encodeSteelseriesLighting(next, this.lightingPacketId());
       await this.open();
-      await this.device.sendFeatureReport(FEATURE_REPORT_ID, encodeSteelseriesLighting(colors));
+      await this.device.sendFeatureReport(FEATURE_REPORT_ID, frame);
+      this.directLighting = next;
     });
   }
 
@@ -253,15 +276,18 @@ export class SteelSeriesKeyboardHidClient {
       const color = [red, green, blue] as const;
       const colors = new Map<number, SteelSeriesRgb>();
       for (const usage of STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS) colors.set(usage, color);
-      await this.device.sendFeatureReport(FEATURE_REPORT_ID, encodeSteelseriesLighting(colors));
+      await this.device.sendFeatureReport(FEATURE_REPORT_ID, encodeSteelseriesLighting(colors, this.lightingPacketId()));
+      this.directLighting = colors;
     });
   }
 
   /** Hand lighting back to the active on-board profile. */
   async clearLighting(): Promise<void> {
     return this.serialized(async () => {
+      if (this.wireless2023) throw new Error("The 2023 wireless direct-lighting release command is not documented for this driver.");
       await this.open();
       await this.device.sendReport(OUTPUT_REPORT_ID, encodeSteelseriesClearDirectLighting());
+      this.directLighting = null;
     });
   }
 
@@ -378,6 +404,7 @@ export class SteelSeriesKeyboardHidClient {
 
   async setRapidTap(enabled: boolean): Promise<boolean> {
     return this.serialized(async () => {
+      if (this.wireless2023) throw new Error("The 2023 wireless Rapid Tap command is not documented for this driver.");
       await this.open();
       await this.device.sendReport(OUTPUT_REPORT_ID, encodeSteelseriesRapidTap(enabled));
       if (this.cachedProfile) this.cachedProfile = { ...this.cachedProfile, live: true, rapidTapEnabled: enabled };
@@ -425,6 +452,11 @@ export class SteelSeriesKeyboardHidClient {
     });
   }
 
+  /** Render a 128×40 monochrome pixel array to the temporary OLED override. */
+  async setOledDirectPixels(pixels: Uint8Array): Promise<void> {
+    return this.setOledDirect(packSteelseriesOledPixels(pixels));
+  }
+
   /** Return OLED ownership to the on-board profile. */
   async clearOledDirect(): Promise<void> {
     return this.serialized(async () => {
@@ -438,7 +470,7 @@ export class SteelSeriesKeyboardHidClient {
     return this.serialized(async () => {
       await this.open();
       const firmwareVersion = await this.readFirmware().catch(() => null);
-      const profile = this.cachedProfile?.live
+      const profile = this.wireless2023 ? null : this.cachedProfile?.live
         ? this.cachedProfile
         : await this.readProfile(0).catch(() => null);
       const product = STEELSERIES_KEYBOARD_PRODUCTS.get(this.device.productId)!;

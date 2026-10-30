@@ -27,6 +27,8 @@ export interface SteelSeriesKeyboardProduct {
 export const STEELSERIES_KEYBOARD_PRODUCTS: ReadonlyMap<number, SteelSeriesKeyboardProduct> = new Map([
   [0x1628, { name: "Apex Pro TKL (2023)", profileSlots: 5, verified: false }],
   [0x1642, { name: "Apex Pro TKL Gen 3", profileSlots: 5, verified: false }],
+  [0x1630, { name: "Apex Pro TKL Wireless (2023)", profileSlots: 0, verified: false }],
+  [0x1632, { name: "Apex Pro TKL Wireless (2023, USB)", profileSlots: 0, verified: false }],
 ]);
 
 export const STEELSERIES_KEYBOARD_PRODUCT_IDS: readonly number[] = [...STEELSERIES_KEYBOARD_PRODUCTS.keys()];
@@ -79,6 +81,20 @@ export type SteelSeriesHallLayer = 0x00 | 0x02;
 /** The GG TKL-2022 command definition is specific to USB PID 0x1628. */
 export const STEELSERIES_APEX_PRO_2023_PRODUCT_ID = 0x1628;
 export const STEELSERIES_OLED_BITMAP_LENGTH = 640;
+export const STEELSERIES_OLED_WIDTH = 128;
+export const STEELSERIES_OLED_HEIGHT = 40;
+
+/** Pack 128×40 live OLED pixels, row-major with the leftmost pixel in bit 7. */
+export function packSteelseriesOledPixels(pixels: Uint8Array): Uint8Array {
+  if (pixels.length !== STEELSERIES_OLED_WIDTH * STEELSERIES_OLED_HEIGHT) {
+    throw new RangeError("Apex Pro TKL OLED requires exactly 128×40 pixels.");
+  }
+  const bitmap = new Uint8Array(STEELSERIES_OLED_BITMAP_LENGTH);
+  for (let index = 0; index < pixels.length; index++) {
+    if (pixels[index]) bitmap[index >> 3] = (bitmap[index >> 3] ?? 0) | (0x80 >> (index & 7));
+  }
+  return bitmap;
+}
 export const STEELSERIES_RAPID_TAP_PAIR_COUNT = 10;
 
 export interface SteelSeriesRapidTapPair {
@@ -377,6 +393,7 @@ export type SteelSeriesRgb = readonly [number, number, number];
 /** `00 40 count {hid,r,g,b}*count` feature report: direct per-key lighting. */
 export function encodeSteelseriesLighting(
   colors: ReadonlyMap<number, SteelSeriesRgb>,
+  packetId: 0x40 | 0x61 = 0x40,
 ): Uint8Array<ArrayBuffer> {
   const entries: number[] = [];
   for (const usage of STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS) {
@@ -386,7 +403,7 @@ export function encodeSteelseriesLighting(
     }
     entries.push(usage, color[0], color[1], color[2]);
   }
-  return featureFrame([0x40, STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.length, ...entries]);
+  return featureFrame([packetId, STEELSERIES_APEX_PRO_2023_LIGHTING_KEYS.length, ...entries]);
 }
 
 /** `00 41` output report: hand lighting back to the on-board profile. */
