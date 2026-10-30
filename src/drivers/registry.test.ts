@@ -6,8 +6,10 @@ import { WuqueHidClient } from "./wuque/hid.ts";
 import { RazerKeyboardHidClient } from "./razer/hid.ts";
 import { LogitechKeyboardHidClient } from "./logitech/hid.ts";
 import { SteelSeriesKeyboardHidClient } from "./steelseries/hid.ts";
+import { ArbiterKeyboardHidClient } from "./arbiter/hid.ts";
 import { DEVICE_DRIVERS, clientSupportScore, createSupportedClient, deviceBrand } from "./registry.ts";
 import {
+  ARBITER_HID_FILTERS,
   SUPPORTED_HID_FILTERS,
   KOCHI_HID_FILTERS,
   LOGITECH_HID_FILTERS,
@@ -64,13 +66,16 @@ const LOGITECH_DEVICE = (): HIDDevice =>
 const STEELSERIES_DEVICE = (): HIDDevice =>
   fakeDevice({ vendorId: STEELSERIES_VENDOR_ID, productId: 0x1628, collections: [collection(0xffc0, 1)] });
 
+const ARBITER_DEVICE = (): HIDDevice =>
+  fakeDevice({ vendorId: 0x371c, productId: 0xa003, collections: [collection(0xff02, 1)] });
+
 const LOGITECH_RECEIVER_DEVICE = (): HIDDevice =>
   fakeDevice({ vendorId: LOGITECH_VENDOR_ID, productId: 0xc547, collections: [collection(0xff00, 2)] });
 
 test("DEVICE_DRIVERS lists one branded entry per supported protocol", () => {
   assert.deepEqual(
     DEVICE_DRIVERS.map((driver) => driver.brand),
-    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries"],
+    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Arbiter Studio"],
   );
 });
 
@@ -81,6 +86,7 @@ test("createSupportedClient returns the matching driver client", () => {
   assert.ok(createSupportedClient(LOGITECH_DEVICE()) instanceof LogitechKeyboardHidClient);
   assert.ok(createSupportedClient(LOGITECH_RECEIVER_DEVICE()) instanceof LogitechKeyboardHidClient);
   assert.ok(createSupportedClient(STEELSERIES_DEVICE()) instanceof SteelSeriesKeyboardHidClient);
+  assert.ok(createSupportedClient(ARBITER_DEVICE()) instanceof ArbiterKeyboardHidClient);
 });
 
 test("createSupportedClient returns null for a device no driver claims", () => {
@@ -103,6 +109,7 @@ test("clientSupportScore reports a nonzero score only for claimed devices", () =
   assert.equal(clientSupportScore(RAZER_DEVICE()), 6);
   assert.equal(clientSupportScore(LOGITECH_DEVICE()), 6);
   assert.equal(clientSupportScore(STEELSERIES_DEVICE()), 6);
+  assert.equal(clientSupportScore(ARBITER_DEVICE()), 6);
   assert.equal(clientSupportScore(fakeDevice({ vendorId: 0x1234, productId: 0x9999 })), 0);
 });
 
@@ -112,6 +119,7 @@ test("deviceBrand names the driver that claimed the client", () => {
   assert.equal(deviceBrand(createSupportedClient(RAZER_DEVICE())!), "Razer");
   assert.equal(deviceBrand(createSupportedClient(LOGITECH_DEVICE())!), "Logitech");
   assert.equal(deviceBrand(createSupportedClient(STEELSERIES_DEVICE())!), "SteelSeries");
+  assert.equal(deviceBrand(createSupportedClient(ARBITER_DEVICE())!), "Arbiter Studio");
 });
 
 test("deviceBrand falls back to Unknown for an unclaimed device", () => {
@@ -182,6 +190,7 @@ test("SUPPORTED_HID_FILTERS concatenates the vendor filter sets with no duplicat
     ...RAZER_HID_FILTERS,
     ...LOGITECH_HID_FILTERS,
     ...STEELSERIES_HID_FILTERS,
+    ...ARBITER_HID_FILTERS,
   ]);
   const seen = new Set(SUPPORTED_HID_FILTERS.map((f) => `${f.vendorId}:${f.productId}:${f.usagePage}:${f.usage}`));
   assert.equal(seen.size, SUPPORTED_HID_FILTERS.length);

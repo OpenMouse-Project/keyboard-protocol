@@ -9,6 +9,7 @@
     "docs/razer-support.md",
     "docs/logitech-support.md",
     "docs/steelseries-support.md",
+    "docs/arbiter-support.md",
     "README.md",
     "CONTRIBUTING.md"
   ],
@@ -48,6 +49,10 @@
     "./steelseries": {
       "types": "./dist/steelseries/index.d.ts",
       "import": "./dist/steelseries/index.js"
+    },
+    "./arbiter": {
+      "types": "./dist/arbiter/index.d.ts",
+      "import": "./dist/arbiter/index.js"
     }
   },
   "scripts": {

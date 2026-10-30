@@ -46,6 +46,9 @@
       ],
       "@openmouse/keyboard-protocol/steelseries": [
         "./src/steelseries/index.ts"
+      ],
+      "@openmouse/keyboard-protocol/arbiter": [
+        "./src/arbiter/index.ts"
       ]
     }
   },
