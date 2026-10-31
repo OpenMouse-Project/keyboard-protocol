@@ -8,10 +8,12 @@ import { LogitechKeyboardHidClient } from "./logitech/hid.ts";
 import { SteelSeriesKeyboardHidClient } from "./steelseries/hid.ts";
 import { KeychronHidClient } from "./keychron/hid.ts";
 import { ArbiterKeyboardHidClient } from "./arbiter/hid.ts";
+import { AtkKeyboardHidClient } from "./atk/hid.ts";
 import { ViaHidClient } from "./via/hid.ts";
 import { DEVICE_DRIVERS, clientSupportScore, createSupportedClient, deviceBrand } from "./registry.ts";
 import {
   ARBITER_HID_FILTERS,
+  ATK_HID_FILTERS,
   SUPPORTED_HID_FILTERS,
   KEYCHRON_HID_FILTERS,
   KOCHI_HID_FILTERS,
@@ -87,7 +89,7 @@ const LOGITECH_RECEIVER_DEVICE = (): HIDDevice =>
 test("DEVICE_DRIVERS lists one branded entry per supported protocol", () => {
   assert.deepEqual(
     DEVICE_DRIVERS.map((driver) => driver.brand),
-    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Keychron", "Arbiter Studio", "VIA"],
+    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Keychron", "Arbiter Studio", "ATK", "VIA"],
   );
 });
 
@@ -100,6 +102,14 @@ test("VIA matches any vendor's raw HID collection but yields to a brand driver",
   assert.equal(createSupportedClient(fakeDevice({ vendorId: 0xfeed, productId: 1, collections: [collection(0xff61, 0x61)] })), null);
   const wooting = fakeDevice({ vendorId: WOOTING_VENDOR_ID, productId: 0x1322, collections: [collection(0xff55, 1), collection(0xff60, 0x61)] });
   assert.ok(createSupportedClient(wooting) instanceof WootingHidClient);
+});
+
+test("an ATK keyboard goes to the ATK driver while another vendor's VIA board still gets VIA", () => {
+  const atk = fakeDevice({ vendorId: 0x373b, productId: 0x10b0, collections: [collection(0xff60, 0x61)] });
+  assert.ok(createSupportedClient(atk) instanceof AtkKeyboardHidClient);
+  assert.equal(deviceBrand(createSupportedClient(atk)!), "ATK");
+  const unlisted = fakeDevice({ vendorId: 0x373b, productId: 0x1176, collections: [collection(0xff60, 0x61)] });
+  assert.ok(createSupportedClient(unlisted) instanceof ViaHidClient);
 });
 
 test("createSupportedClient returns the matching driver client", () => {
@@ -224,6 +234,7 @@ test("SUPPORTED_HID_FILTERS concatenates the vendor filter sets with no duplicat
     ...STEELSERIES_HID_FILTERS,
     ...KEYCHRON_HID_FILTERS,
     ...ARBITER_HID_FILTERS,
+    ...ATK_HID_FILTERS,
     ...VIA_HID_FILTERS,
   ]);
   const seen = new Set(SUPPORTED_HID_FILTERS.map((f) => `${f.vendorId}:${f.productId}:${f.usagePage}:${f.usage}`));
