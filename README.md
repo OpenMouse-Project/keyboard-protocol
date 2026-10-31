@@ -48,6 +48,7 @@ filters, the driver registry, and shared status types live under
 | SteelSeries | `@openmouse/keyboard-protocol/steelseries` |
 | Keychron (Hall-effect) | `@openmouse/keyboard-protocol/keychron` |
 | Arbiter Studio | `@openmouse/keyboard-protocol/arbiter` |
+| ATK (Hall-effect and RS series) | `@openmouse/keyboard-protocol/atk` |
 | VIA (QMK/VIA firmware, any vendor) | `@openmouse/keyboard-protocol/via` |
 
 The VIA driver matches the raw-HID collection (`0xFF60:0x61`) on any board and
@@ -116,6 +117,19 @@ entry is `verified: false`. The driver reads identity, per-key travel, the light
 effect and SuperTap, and writes travel, light effects, SuperTap and key
 bindings (including the PRO models' FN layer) with read-back. See
 [the Arbiter ledger](docs/arbiter-support.md).
+
+### ATK
+
+ATK, EDGE, RS and Velota keyboards (vendor id `0x373B`, 107 catalogued product
+ids) answer the VIA-framed raw-HID collection (`0xFF60:0x61`) with their own
+custom commands, which is not VIA's command set. The codec and driver are
+written from the OpenATK keyboard configurator, whose request frames the tests
+compare byte for byte, and are not yet exercised on hardware through this
+package. The driver reads identity, travel limits, dead zones, polling rate,
+sleep, lighting and feature flags, and writes them with read-back, along with
+per-key travel, rapid trigger and advanced keys. QMK-based boards that only
+carry ATK branding (the Hex80 collaboration) are not catalogued and stay on the
+generic VIA driver. See [the ATK ledger](docs/atk-support.md).
 
 ### BABAO60 HE validation status
 

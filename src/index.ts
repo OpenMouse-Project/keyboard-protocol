@@ -5,4 +5,5 @@ export * as logitech from "./logitech/index.js";
 export * as steelseries from "./steelseries/index.js";
 export * as keychron from "./keychron/index.js";
 export * as arbiter from "./arbiter/index.js";
+export * as atk from "./atk/index.js";
 export * as via from "./via/index.js";
