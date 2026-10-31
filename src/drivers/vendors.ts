@@ -42,6 +42,7 @@ import {
   STEELSERIES_KEYBOARD_PRODUCT_IDS,
   STEELSERIES_VENDOR_ID,
 } from "@openmouse/keyboard-protocol/steelseries";
+import { ATK_CONFIG_USAGE, ATK_CONFIG_USAGE_PAGE, ATK_KEYBOARD_PRODUCT_IDS, ATK_VENDOR_ID } from "@openmouse/keyboard-protocol/atk";
 import { VIA_USAGE, VIA_USAGE_PAGE } from "@openmouse/keyboard-protocol/via";
 
 export const VENDOR_ID = {
@@ -147,6 +148,18 @@ export const ARBITER_HID_FILTERS: HIDDeviceFilter[] = ARBITER_PRODUCTS.map((entr
 }));
 
 /**
+ * ATK keyboards answer the VIA-framed raw-HID collection (0xFF60:0x61) with
+ * their own custom commands. Each catalogued product id is filtered
+ * explicitly so no other vendor's VIA board is claimed as an ATK keyboard.
+ */
+export const ATK_HID_FILTERS: HIDDeviceFilter[] = ATK_KEYBOARD_PRODUCT_IDS.map((productId) => ({
+  vendorId: ATK_VENDOR_ID,
+  productId,
+  usagePage: ATK_CONFIG_USAGE_PAGE,
+  usage: ATK_CONFIG_USAGE,
+}));
+
+/**
  * VIA/QMK raw HID (0xFF60:0x61). Any vendor can ship VIA firmware, so this
  * filter has no vendor or product id; it matches the collection only.
  */
@@ -161,5 +174,6 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...STEELSERIES_HID_FILTERS,
   ...KEYCHRON_HID_FILTERS,
   ...ARBITER_HID_FILTERS,
+  ...ATK_HID_FILTERS,
   ...VIA_HID_FILTERS,
 ];
