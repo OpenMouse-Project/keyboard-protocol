@@ -125,7 +125,13 @@ export class MchoseKeyboardHidClient {
   async open(): Promise<void> {
     this.requireProduct();
     if (this.faulted) throw new Error("Reconnect the MCHOSE keyboard after a failed transaction.");
+    const session = this.session;
     if (!this.device.opened) await this.device.open();
+    // close() ran while the device was opening: leave it closed rather than carry on.
+    if (session !== this.session) {
+      if (this.device.opened) await this.device.close();
+      throw new Error("The MCHOSE keyboard was closed while it was opening.");
+    }
     if (this.faulted) {
       if (this.device.opened) await this.device.close();
       throw new Error("Reconnect the MCHOSE keyboard after a failed transaction.");

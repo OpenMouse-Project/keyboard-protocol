@@ -328,3 +328,19 @@ test("an info reply too short to hold the firmware version ends the session", as
   fake.shortReply = { command: MCHOSE_COMMAND.getInfo, size: 1 };
   await assert.rejects(new MchoseKeyboardHidClient(fake.hid).readInfo(), /answered command 0x/);
 });
+
+test("closing while the device is still opening leaves it closed", async () => {
+  const fake = new FakeMchoseKeyboard();
+  let finishOpen: () => void = () => undefined;
+  fake.open = () => new Promise<void>((resolve) => { finishOpen = () => { fake.opened = true; resolve(); }; });
+  const client = new MchoseKeyboardHidClient(fake.hid);
+  const read = client.readBase();
+  await new Promise((resolve) => setImmediate(resolve));
+  await client.close();
+  finishOpen();
+  await assert.rejects(read, /closed while it was opening/);
+  assert.equal(fake.opened, false);
+  assert.equal(fake.listeners.size, 0, "no report listener left behind");
+  fake.open = async () => { fake.opened = true; };
+  assert.ok((await client.readBase()).profileCount > 0, "a later open starts a new session");
+});
