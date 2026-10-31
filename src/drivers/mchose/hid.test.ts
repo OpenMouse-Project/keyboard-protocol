@@ -314,3 +314,17 @@ test("factory reset targets one profile or the whole keyboard and waits for the 
   await assert.rejects(client.factoryReset(0), /Reconnect/, "a faulted session reports the failure instead of waiting for a reboot");
   assert.deepEqual(fake.resets, [2, 255]);
 });
+
+test("a clean close is not a fault, so the same client can open again", async () => {
+  const fake = new FakeMchoseKeyboard();
+  const client = new MchoseKeyboardHidClient(fake.hid);
+  await client.readBase();
+  await client.close();
+  assert.ok((await client.readBase()).profileCount > 0);
+});
+
+test("an info reply too short to hold the firmware version ends the session", async () => {
+  const fake = new FakeMchoseKeyboard();
+  fake.shortReply = { command: MCHOSE_COMMAND.getInfo, size: 1 };
+  await assert.rejects(new MchoseKeyboardHidClient(fake.hid).readInfo(), /answered command 0x/);
+});

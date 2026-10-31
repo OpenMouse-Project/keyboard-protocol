@@ -97,6 +97,8 @@ export class MchoseKeyboardHidClient {
   private pending: { request: Uint8Array; resolve: (reply: MchoseReply) => void } | null = null;
   private readonly keyListeners = new Set<(report: MchoseKeyReport) => void>();
   private readonly resetListeners = new Set<() => void>();
+  /** Bumped by close(), so an exchange it interrupts does not fault the next session. */
+  private session = 0;
 
   constructor(device: HIDDevice) { this.device = device; }
 
@@ -135,7 +137,8 @@ export class MchoseKeyboardHidClient {
   }
 
   async close(): Promise<void> {
-    this.faulted = true;
+    // A clean close ends the session without faulting it; open() may start a new one.
+    this.session += 1;
     this.pending = null;
     if (this.listening) this.device.removeEventListener("inputreport", this.onReport);
     this.listening = false;
@@ -190,6 +193,7 @@ export class MchoseKeyboardHidClient {
    */
   private async exchange(frame: Uint8Array<ArrayBuffer>): Promise<MchoseReply> {
     await this.open();
+    const session = this.session;
     try {
       for (let attempt = 0; attempt <= REPLY_RETRIES; attempt += 1) {
         const answer = await this.attempt(frame);
@@ -198,7 +202,8 @@ export class MchoseKeyboardHidClient {
       }
       throw new Error(`The MCHOSE keyboard did not answer command 0x${frame[1]!.toString(16)}.`);
     } catch (error) {
-      this.faulted = true;
+      // An exchange cut short by close() is not a protocol failure.
+      if (session === this.session) this.faulted = true;
       throw error;
     }
   }
@@ -207,9 +212,11 @@ export class MchoseKeyboardHidClient {
     const out = new Uint8Array(size);
     for (const frame of mchoseReadFrames(command, offset, size)) {
       const reply = await this.exchange(frame);
-      // Only the info read answers short (31 of 56 bytes); anything else short would be
-      // written back as zeros by a read-modify-write, so it ends the session instead.
-      if (reply.size !== frame[4] && command !== MCHOSE_COMMAND.getInfo) {
+      // Only the info read answers short (31 of 56 bytes), and it still needs the firmware
+      // version; anything else short would be written back as zeros by a read-modify-write,
+      // so it ends the session instead.
+      const info = command === MCHOSE_COMMAND.getInfo;
+      if (info ? reply.size < 2 : reply.size !== frame[4]) {
         this.faulted = true;
         throw new Error(`The MCHOSE keyboard answered command 0x${command.toString(16)} with ${reply.size} of ${frame[4]} bytes.`);
       }

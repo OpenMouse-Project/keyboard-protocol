@@ -176,7 +176,7 @@ export function mchoseChangedWriteFrames(
   if (current.length !== next.length) throw new RangeError("MCHOSE tables differ in size.");
   const window = Math.floor(MCHOSE_MAX_CHUNK / record) * record;
   if (window < 1) throw new RangeError("MCHOSE records must fit in one frame.");
-  // Pull the last window back only when that keeps it on a record boundary.
+  // Pull the last window back to end at the table's end, even when that splits a record, as the vendor app does.
   const lastFull = next.length - window;
   const starts = new Set<number>();
   next.forEach((byte, index) => {

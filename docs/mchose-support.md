@@ -11,7 +11,7 @@ protocol (`qhw`, report id `0x4D`). Those are not covered here.
 
 | Model | Product id | Status |
 | --- | --- | --- |
-| Ace 68 Air III | `0x2132` | Verified: every read and write below was exercised on hardware |
+| Ace 68 Air III | `0x2132` | Verified on hardware (firmware 116); "Hardware checks" lists what was exercised |
 | Ace 68 Air II | `0x2120` | Same layout, keymap and command set in the vendor bundle; not tested |
 
 ## Transport
