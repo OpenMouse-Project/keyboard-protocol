@@ -110,12 +110,18 @@ export const ARBITER_PRODUCTS: readonly ArbiterProduct[] = [
   product("Polar 65", ARBITER_VENDOR_ID_ALT, 0xa005, 0xff02, "yl", 68, 68, 1, 1, true),
   product("Arbiter Polar 65", ARBITER_VENDOR_ID_ALT, 0xa006, 0xff01, "s2", 69, 69, 1, 1, true),
   product("Polar 65 PRO", ARBITER_VENDOR_ID_ALT, 0xa003, 0xff02, "i2", 68, 68, 2, 3, true),
-  // 0xA009 ("Polar 65+") is not in the vendor bundle analysed 2026-10-30.
-  // Row inferred from a USB capture of the vendor app driving the board:
+  // 0xA009 ("Polar 65+") is not in the vendor bundle analysed 2026-10-30,
+  // but the current vendor app (app2.arbiterstudio.com) pairs product
+  // 40969 strictly with usagePage 65282 (0xFF02) and only claims devices
+  // whose collections expose that page. The board also exposes an 0xFF01
+  // collection, but driving it gets no reply (see #9); the live
+  // configuration interface is the 0xFF02 one, on USB interface 3
+  // (all vendor-app traffic flows over endpoints 0x04/0x84, interface 2
+  // is silent). Wire sizes come from a USB capture of the vendor app:
   // travel writes total 3 (29+29+10 = 68), key-mapping writes total 5
   // (29x4+20 = 136 = 2 layers x 68), SetBoardProfile values 0-2, and
   // Get/SetUserMode traffic, matching the i2 (65 PRO) class.
-  product("Polar 65+", ARBITER_VENDOR_ID_ALT, 0xa009, 0xff01, "i2", 68, 68, 2, 3, true),
+  product("Polar 65+", ARBITER_VENDOR_ID_ALT, 0xa009, 0xff02, "i2", 68, 68, 2, 3, true),
   product("Polar 75 PRO", ARBITER_VENDOR_ID_ALT, 0xa001, 0xff02, "u2", 82, 81, 2, 3, true),
 ];
 
