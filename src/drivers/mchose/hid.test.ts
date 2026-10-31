@@ -309,4 +309,8 @@ test("factory reset targets one profile or the whole keyboard and waits for the 
   await client.factoryReset("all");
   assert.deepEqual(fake.resets, [2, 255]);
   await assert.rejects(client.factoryReset(9), RangeError);
+  fake.silent = true;
+  await assert.rejects(client.readBase(), /did not answer/);
+  await assert.rejects(client.factoryReset(0), /Reconnect/, "a faulted session reports the failure instead of waiting for a reboot");
+  assert.deepEqual(fake.resets, [2, 255]);
 });

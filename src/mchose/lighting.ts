@@ -101,7 +101,10 @@ function checkZone(zone: MchoseLightZone): void {
   if (![zone.color.r, zone.color.g, zone.color.b].every(byte)) throw new RangeError("Colour channels must be bytes.");
 }
 
-const sameZone = (a: object, b: object): boolean => JSON.stringify(a) === JSON.stringify(b);
+/** Field by field, so a zone built with its properties in another order still counts as unchanged. */
+const sameZone = (a: MchoseLightZone & { direction?: number }, b: MchoseLightZone & { direction?: number }): boolean =>
+  a.effect === b.effect && a.brightness === b.brightness && a.speed === b.speed && a.rainbow === b.rainbow
+  && a.direction === b.direction && a.color.r === b.color.r && a.color.g === b.color.g && a.color.b === b.color.b;
 
 /**
  * `config` with new lighting; every byte outside the lighting fields is kept.

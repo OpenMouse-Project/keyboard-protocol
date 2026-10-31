@@ -549,6 +549,8 @@ export class MchoseKeyboardHidClient {
       let done: () => void = () => undefined;
       const announced = new Promise<void>((resolve) => { done = resolve; });
       this.resetListeners.add(done);
+      // A closed or faulted session must fail here, not be mistaken for a reboot below.
+      await this.open();
       const timer = setTimeout(done, RESET_WAIT_MS);
       try {
         // An Ace 68 Air III reboots straight away, often before it echoes the frame.

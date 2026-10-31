@@ -212,3 +212,13 @@ test("lighting leaves an unchanged zone as stored, even out of range", () => {
   assert.deepEqual([next[25], next[26]], [0xc8, 0xff], "the light box bytes are untouched");
   assert.throws(() => mchoseConfigWithLighting(odd, { ...lighting, side: { ...lighting.side, effect: 3 } }), RangeError, "editing that zone still checks it");
 });
+
+test("an unchanged lighting zone in another property order is not rechecked", () => {
+  const config = new Array(64).fill(0);
+  config[25] = 200; // side brightness the firmware may hold outside 0-100
+  const stored = decodeMchoseLighting(config);
+  const side = { color: { b: stored.side.color.b, g: stored.side.color.g, r: stored.side.color.r }, rainbow: stored.side.rainbow, speed: stored.side.speed, brightness: stored.side.brightness, effect: stored.side.effect };
+  const next = mchoseConfigWithLighting(config, { main: { ...stored.main, effect: 6 }, side });
+  assert.equal(next[8], 6);
+  assert.equal(next[25], 200, "the side zone is left as stored");
+});
