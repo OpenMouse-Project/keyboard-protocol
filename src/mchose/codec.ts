@@ -466,12 +466,27 @@ export function decodeMchoseProfileNames(bytes: ArrayLike<number>): (string | nu
 }
 
 /**
- * A readable profile name. The vendor app stores its own preset names as
- * markers such as `EQ<official@-10:0>QE`; those have no text to show.
+ * A readable profile name, or null where the slot has no name of the user's
+ * own. The vendor app stores some names as codes: `EQ<official@-10:0>QE`
+ * points into its online preset library (nothing to show here),
+ * `i18n<defaultOnboard>3` is its default for an unnamed slot, and
+ * `lang<...>` holds a name in several languages, of which English is shown.
  */
 export function mchoseDisplayProfileName(name: string | null): string | null {
-  if (name === null || /^EQ<.*>QE$/.test(name)) return null;
-  return name;
+  if (name === null || /^EQ<.*>QE$/.test(name) || /^i18n<defaultOnboard>\d*$/.test(name)) return null;
+  const multi = /^lang<([\s\S]*)>$/.exec(name);
+  if (!multi) return name;
+  const body = multi[1]!;
+  let english: unknown;
+  if (body.startsWith("{")) {
+    try {
+      const names = JSON.parse(body) as Record<string, unknown>;
+      english = names.en ?? names[typeof names.fallback === "string" ? names.fallback : "en"];
+    } catch { /* fall through to the plain list */ }
+  }
+  // The plain form lists the languages in the vendor app's order, Chinese then English.
+  if (typeof english !== "string") english = body.split(",")[1] ?? body.split(",")[0];
+  return typeof english === "string" && english.trim() !== "" ? english.trim() : null;
 }
 
 /** Key mode values the vendor app writes; the firmware may hold others. */

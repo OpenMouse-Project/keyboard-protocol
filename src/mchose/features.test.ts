@@ -222,3 +222,12 @@ test("an unchanged lighting zone in another property order is not rechecked", ()
   assert.equal(next[8], 6);
   assert.equal(next[25], 200, "the side zone is left as stored");
 });
+
+test("the vendor app's name codes read as names, or as no name", () => {
+  assert.equal(mchoseDisplayProfileName("i18n<defaultOnboard>"), null);
+  assert.equal(mchoseDisplayProfileName("i18n<defaultOnboard>3"), null);
+  assert.equal(mchoseDisplayProfileName("EQ<apex@-1:0>QE"), null);
+  assert.equal(mchoseDisplayProfileName("lang<无畏契约明星主播,VALORANT star streamer>"), "VALORANT star streamer");
+  assert.equal(mchoseDisplayProfileName('lang<{"zh": "均衡", "en": "Balanced"}>'), "Balanced");
+  assert.equal(mchoseDisplayProfileName("Games"), "Games");
+});
