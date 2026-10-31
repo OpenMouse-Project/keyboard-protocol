@@ -8,6 +8,7 @@ import { LogitechKeyboardHidClient } from "./logitech/hid.ts";
 import { SteelSeriesKeyboardHidClient } from "./steelseries/hid.ts";
 import { KeychronHidClient } from "./keychron/hid.ts";
 import { ArbiterKeyboardHidClient } from "./arbiter/hid.ts";
+import { ViaHidClient } from "./via/hid.ts";
 import { DEVICE_DRIVERS, clientSupportScore, createSupportedClient, deviceBrand } from "./registry.ts";
 import {
   ARBITER_HID_FILTERS,
@@ -17,6 +18,7 @@ import {
   LOGITECH_HID_FILTERS,
   RAZER_HID_FILTERS,
   STEELSERIES_HID_FILTERS,
+  VIA_HID_FILTERS,
   VENDOR_ID,
   WOOTING_HID_FILTERS,
   WUQUE_HID_FILTERS,
@@ -85,8 +87,19 @@ const LOGITECH_RECEIVER_DEVICE = (): HIDDevice =>
 test("DEVICE_DRIVERS lists one branded entry per supported protocol", () => {
   assert.deepEqual(
     DEVICE_DRIVERS.map((driver) => driver.brand),
-    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Keychron", "Arbiter Studio"],
+    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Keychron", "Arbiter Studio", "VIA"],
   );
+});
+
+test("VIA matches any vendor's raw HID collection but yields to a brand driver", () => {
+  const via = fakeDevice({ vendorId: 0xfeed, productId: 1, collections: [collection(0xff60, 0x61)] });
+  assert.ok(createSupportedClient(via) instanceof ViaHidClient);
+  assert.equal(deviceBrand(createSupportedClient(via)!), "VIA");
+  const nested = fakeDevice({ vendorId: 0xfeed, productId: 1, collections: [collection(0x0001, 0x0006, [collection(0xff60, 0x61)])] });
+  assert.ok(createSupportedClient(nested) instanceof ViaHidClient);
+  assert.equal(createSupportedClient(fakeDevice({ vendorId: 0xfeed, productId: 1, collections: [collection(0xff61, 0x61)] })), null);
+  const wooting = fakeDevice({ vendorId: WOOTING_VENDOR_ID, productId: 0x1322, collections: [collection(0xff55, 1), collection(0xff60, 0x61)] });
+  assert.ok(createSupportedClient(wooting) instanceof WootingHidClient);
 });
 
 test("createSupportedClient returns the matching driver client", () => {
@@ -102,7 +115,7 @@ test("createSupportedClient returns the matching driver client", () => {
 
 test("Keychron claims only catalogued HE boards on the raw-HID collection", () => {
   assert.equal(deviceBrand(createSupportedClient(KEYCHRON_DEVICE())!), "Keychron");
-  assert.equal(createSupportedClient(KEYCHRON_DEVICE({ productId: 0x0001 })), null);
+  assert.equal(deviceBrand(createSupportedClient(KEYCHRON_DEVICE({ productId: 0x0001 }))!), "VIA");
   assert.equal(createSupportedClient(KEYCHRON_DEVICE({ collections: [collection(0xff60, 0x62)] })), null);
   assert.equal(KEYCHRON_HID_FILTERS.length, KEYCHRON_HE_PRODUCT_IDS.length);
   assert.ok(KEYCHRON_HID_FILTERS.every((filter) => filter.vendorId === VENDOR_ID.keychron));
@@ -211,6 +224,7 @@ test("SUPPORTED_HID_FILTERS concatenates the vendor filter sets with no duplicat
     ...STEELSERIES_HID_FILTERS,
     ...KEYCHRON_HID_FILTERS,
     ...ARBITER_HID_FILTERS,
+    ...VIA_HID_FILTERS,
   ]);
   const seen = new Set(SUPPORTED_HID_FILTERS.map((f) => `${f.vendorId}:${f.productId}:${f.usagePage}:${f.usage}`));
   assert.equal(seen.size, SUPPORTED_HID_FILTERS.length);

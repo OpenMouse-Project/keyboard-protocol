@@ -11,6 +11,7 @@
     "docs/steelseries-support.md",
     "docs/keychron-support.md",
     "docs/arbiter-support.md",
+    "docs/via-support.md",
     "README.md",
     "CONTRIBUTING.md"
   ],
@@ -58,6 +59,10 @@
     "./arbiter": {
       "types": "./dist/arbiter/index.d.ts",
       "import": "./dist/arbiter/index.js"
+    },
+    "./via": {
+      "types": "./dist/via/index.d.ts",
+      "import": "./dist/via/index.js"
     }
   },
   "scripts": {
