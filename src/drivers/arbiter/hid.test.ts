@@ -121,7 +121,7 @@ test("registry and filters claim only catalogued vendor, product and usage page 
   const device = new FakeArbiterKeyboard();
   assert.ok(createSupportedClient(device.hid) instanceof ArbiterKeyboardHidClient);
   assert.equal(deviceBrand(new ArbiterKeyboardHidClient(device.hid)), "Arbiter Studio");
-  assert.equal(ARBITER_HID_FILTERS.length, 8);
+  assert.equal(ARBITER_HID_FILTERS.length, 9);
   assert.deepEqual(ARBITER_HID_FILTERS[0], { vendorId: 0x1a81, productId: 0x2072, usagePage: 0xff01, usage: 1 });
   assert.equal(VENDOR_ID.arbiter, 0x1a81);
   assert.equal(VENDOR_ID.arbiterAlt, 0x371c);

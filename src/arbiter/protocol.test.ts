@@ -156,7 +156,7 @@ test("write acknowledgements read the flag and tolerate a short body", () => {
 });
 
 test("the catalog matches the vendor bundle and is entirely unverified", () => {
-  assert.equal(ARBITER_PRODUCTS.length, 8);
+  assert.equal(ARBITER_PRODUCTS.length, 9);
   assert.ok(ARBITER_PRODUCTS.every((entry) => !entry.verified));
   assert.equal(arbiterProduct(0x1a81, 0x2072, 0xff01)?.superTap, false);
   assert.equal(arbiterProduct(0x1a81, 0x2072, 0xff02)?.superTap, true);
@@ -164,10 +164,10 @@ test("the catalog matches the vendor bundle and is entirely unverified", () => {
   assert.equal(arbiterProduct(0x371c, 0xa003, 0xff01), undefined);
   assert.deepEqual(ARBITER_PRODUCTS.map((entry) => [entry.name, entry.travelKeys, entry.bindingKeys, arbiterTravelPackets(entry), arbiterKeyMappingPackets(entry)]), [
     ["Arbiter Polar 65", 68, 68, 3, 3], ["Arbiter Polar 65", 68, 68, 3, 3], ["Polar 65", 68, 68, 3, 3], ["Nimbus 65", 68, 68, 3, 3],
-    ["Polar 65", 68, 68, 3, 3], ["Arbiter Polar 65", 69, 69, 3, 3], ["Polar 65 PRO", 68, 68, 3, 5], ["Polar 75 PRO", 82, 81, 3, 6],
+    ["Polar 65", 68, 68, 3, 3], ["Arbiter Polar 65", 69, 69, 3, 3], ["Polar 65 PRO", 68, 68, 3, 5], ["Polar 65+", 68, 68, 3, 5], ["Polar 75 PRO", 82, 81, 3, 6],
   ]);
   assert.deepEqual(ARBITER_PRODUCTS.filter(arbiterIsPro).map((entry) => [entry.name, entry.layers, entry.profiles]),
-    [["Polar 65 PRO", 2, 3], ["Polar 75 PRO", 2, 3]]);
+    [["Polar 65 PRO", 2, 3], ["Polar 65+", 2, 3], ["Polar 75 PRO", 2, 3]]);
 });
 
 test("layouts match the catalog and the factory main layer is the matrix", () => {
@@ -177,7 +177,7 @@ test("layouts match the catalog and the factory main layer is the matrix", () =>
     for (const layer of layout.layers) assert.equal(layer.length, layout.matrix.length);
     assert.deepEqual(layout.layers[0], layout.matrix.map((key) => key.keyCode));
   }
-  assert.deepEqual(ARBITER_PRODUCTS.map((entry) => arbiterLayout(entry).matrix.length), [68, 68, 68, 68, 68, 70, 68, 82]);
+  assert.deepEqual(ARBITER_PRODUCTS.map((entry) => arbiterLayout(entry).matrix.length), [68, 68, 68, 68, 68, 70, 68, 68, 82]);
 });
 
 test("wire entries map to matrix keys without landing on a placeholder", () => {

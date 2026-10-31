@@ -37,7 +37,14 @@ differs between models (see [Protocol variants](#protocol-variants)).
 | Polar 65 - Gaming Keyboard | `0x371C` | `0xA005` | `0xFF02` | Main | 1 | yes | `yl` |
 | Arbiter Polar 65 - Gaming Keyboard | `0x371C` | `0xA006` | `0xFF01` | Main | 1 | yes | `s2` |
 | Polar 65 PRO - Gaming Keyboard | `0x371C` | `0xA003` | `0xFF02` | Main, FN | 3 | yes | `i2` |
+| Polar 65+ - Gaming Keyboard | `0x371C` | `0xA009` | `0xFF01` | Main, FN | 3 | yes | `i2` |
 | Polar 75 PRO - Gaming Keyboard | `0x371C` | `0xA001` | `0xFF02` | Main, FN | 3 | yes | `u2` |
+
+`0x371C:0xA009` is not in the vendor bundle. Its row comes from a USB
+capture of the vendor app driving the board (travel writes total 3 with
+29+29+10 entries, key-mapping writes total 5 with 29x4+20 = 136 entries,
+`SetBoardProfile` values 0-2, `Get/SetUserMode` traffic), matching the `i2`
+class. It is `verified: false` like every other entry.
 
 Only `0x1A81:0x2072` is defined on two usage pages. Whether the other PIDs
 also expose a second page is unknown. Discovery filters must pair each PID
