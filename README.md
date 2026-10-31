@@ -49,6 +49,7 @@ filters, the driver registry, and shared status types live under
 | Keychron (Hall-effect) | `@openmouse/keyboard-protocol/keychron` |
 | Arbiter Studio | `@openmouse/keyboard-protocol/arbiter` |
 | VIA (QMK/VIA firmware, any vendor) | `@openmouse/keyboard-protocol/via` |
+| MCHOSE (Ace 68 Air) | `@openmouse/keyboard-protocol/mchose` |
 
 The VIA driver matches the raw-HID collection (`0xFF60:0x61`) on any board and
 covers keymaps, keycode names, encoders, macros and custom-menu lighting. Layout
@@ -116,6 +117,19 @@ entry is `verified: false`. The driver reads identity, per-key travel, the light
 effect and SuperTap, and writes travel, light effects, SuperTap and key
 bindings (including the PRO models' FN layer) with read-back. See
 [the Arbiter ledger](docs/arbiter-support.md).
+
+### MCHOSE
+
+The Ace 68 Air III (`0x41E4:0x2132`) speaks a 64-byte command protocol on its
+USB interface 1 collection (usage page `0x0001`, usage 0), reverse-engineered
+from the vendor's M HUB web configurator. It covers identity, profiles and
+their names, polling, keyboard settings, per-key travel and rapid trigger,
+keymaps on all four layers, macros, DKS, mod-tap, toggle and pair keys,
+lighting, per-key colours, calibration and factory reset. Every write is
+confirmed by read-back. It was tested on an Air III with firmware 116; the
+ledger lists exactly which reads and writes were exercised on hardware. The
+Air II (`0x2120`) is catalogued from the same bundle and is untested. See
+[the MCHOSE ledger](docs/mchose-support.md).
 
 ### BABAO60 HE validation status
 

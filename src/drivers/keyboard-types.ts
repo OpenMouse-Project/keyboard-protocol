@@ -38,6 +38,7 @@ import type { LogitechKeyboardState } from "@openmouse/keyboard-protocol/logitec
 import type { SteelSeriesApexProfile } from "@openmouse/keyboard-protocol/steelseries";
 import type { KeychronHeFeatures } from "@openmouse/keyboard-protocol/keychron";
 import type { ArbiterKeyboardState } from "@openmouse/keyboard-protocol/arbiter";
+import type { MchoseKeyboardState } from "@openmouse/keyboard-protocol/mchose";
 
 export interface KeyboardUiHints {
   /** Stable driver id, e.g. "wooting". */
@@ -256,6 +257,8 @@ export interface KeyboardStatus {
   steelseries?: { productId: number; profile: SteelSeriesApexProfile | null; verified: boolean } | null;
   /** Arbiter Studio keyboard state (travel, light effect, SuperTap). */
   arbiter?: ArbiterKeyboardState | null;
+  /** MCHOSE magnetic keyboard state (identity, profile, performance, key travel). */
+  mchose?: MchoseKeyboardState | null;
   /** VIA/QMK board identity; keymap, macros and lighting are read on demand. */
   via?: ViaStatus | null;
 }
