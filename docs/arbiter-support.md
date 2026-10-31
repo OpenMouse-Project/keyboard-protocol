@@ -37,14 +37,22 @@ differs between models (see [Protocol variants](#protocol-variants)).
 | Polar 65 - Gaming Keyboard | `0x371C` | `0xA005` | `0xFF02` | Main | 1 | yes | `yl` |
 | Arbiter Polar 65 - Gaming Keyboard | `0x371C` | `0xA006` | `0xFF01` | Main | 1 | yes | `s2` |
 | Polar 65 PRO - Gaming Keyboard | `0x371C` | `0xA003` | `0xFF02` | Main, FN | 3 | yes | `i2` |
-| Polar 65+ - Gaming Keyboard | `0x371C` | `0xA009` | `0xFF01` | Main, FN | 3 | yes | `i2` |
+| Polar 65+ - Gaming Keyboard | `0x371C` | `0xA009` | `0xFF02` | Main, FN | 3 | yes | `i2` |
 | Polar 75 PRO - Gaming Keyboard | `0x371C` | `0xA001` | `0xFF02` | Main, FN | 3 | yes | `u2` |
 
-`0x371C:0xA009` is not in the vendor bundle. Its row comes from a USB
-capture of the vendor app driving the board (travel writes total 3 with
-29+29+10 entries, key-mapping writes total 5 with 29x4+20 = 136 entries,
-`SetBoardProfile` values 0-2, `Get/SetUserMode` traffic), matching the `i2`
-class. It is `verified: false` like every other entry.
+`0x371C:0xA009` is not in the vendor bundle. Its row comes from the live
+vendor app (app2.arbiterstudio.com, bundle retrieved 2026-10-31), which
+pairs product 40969 strictly with usage page 65282 (`0xFF02`) and only
+claims devices whose collections expose that page — plus a USB capture of
+that app driving the board (travel writes total 3 with 29+29+10 entries,
+key-mapping writes total 5 with 29x4+20 = 136 entries, `SetBoardProfile`
+values 0-2, `Get/SetUserMode` traffic), matching the `i2` class. The
+board also exposes an `0xFF01` collection, but it answers nothing, so the
+row lists `0xFF02` only. It is `verified: false` like every other entry.
+The same bundle lists a second Polar 65+ variant, product 40976
+(`0x371C:0xA010`), also on `0xFF02` with Main+FN, 3 profiles and SuperTap
+but a different protocol class — no capture exists for it yet, so it has
+no row.
 
 Only `0x1A81:0x2072` is defined on two usage pages. Whether the other PIDs
 also expose a second page is unknown. Discovery filters must pair each PID
