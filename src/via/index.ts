@@ -281,7 +281,7 @@ export interface ViaCustomKeycode {
   shortName?: string;
 }
 
-type LightingFamily = "backlight" | "rgblight" | "matrix";
+type LightingFamily = "backlight" | "rgblight" | "matrix" | "wt";
 interface LightingRow { code: number; name: string; title: string; family: LightingFamily }
 
 // Names and titles in code order for the legacy numbering; the modern backlight list reorders the first five (see `lightingRows`).
@@ -307,6 +307,14 @@ const MATRIX_KEYS: readonly (readonly [string, string])[] = [
   ["RM_VALU", "Matrix brightness up"], ["RM_VALD", "Matrix brightness down"], ["RM_SPDU", "Matrix speed up"], ["RM_SPDD", "Matrix speed down"],
 ];
 
+/** Wilba Tech lighting keys, in code order from 0x5F00 (VIA's own table; only old firmware has them). */
+const WT_KEYS: readonly (readonly [string, string])[] = [
+  ["BR_INC", "Brightness +"], ["BR_DEC", "Brightness -"], ["EF_INC", "Effect +"], ["EF_DEC", "Effect -"],
+  ["ES_INC", "Effect Speed +"], ["ES_DEC", "Effect Speed -"], ["H1_INC", "Color1 Hue +"], ["H1_DEC", "Color1 Hue -"],
+  ["S1_INC", "Color1 Sat +"], ["S1_DEC", "Color1 Sat -"], ["H2_INC", "Color2 Hue +"], ["H2_DEC", "Color2 Hue -"],
+  ["S2_INC", "Color2 Sat +"], ["S2_DEC", "Color2 Sat -"],
+];
+
 const lightingCache = new Map<number, LightingRow[]>();
 
 /** The lighting keycodes of a protocol generation: legacy (to 10), 11, 12 (adds RM_), 13 (RGB_ becomes UG_). */
@@ -325,6 +333,7 @@ function lightingRows(protocolVersion: number): LightingRow[] {
     push("rgblight", generation ? 0x7820 : 0x5cc2, generation ? [...RGB_KEYS, ["RGB_MODE_RGBTEST", "RGB test"]] : RGB_KEYS);
   }
   if (generation >= 12) push("matrix", 0x7840, MATRIX_KEYS);
+  if (generation === 0) push("wt", 0x5f00, WT_KEYS);
   lightingCache.set(generation, rows);
   return rows;
 }
@@ -337,6 +346,7 @@ export function viaLightingKeycodes(protocolVersion: number, modules: readonly s
   if (has("qmk_lighting", "qmk_rgblight_keycodes", "qmk_backlight_rgblight_keycodes")) families.add("rgblight");
   // VIA offers the shared RGB_ codes for matrix boards up to protocol 12; the RM_ family is its own only from 13.
   if (has("qmk_rgb_matrix_keycodes")) families.add(protocolVersion >= 13 ? "matrix" : "rgblight");
+  if (has("wt_keycodes")) families.add("wt");
   return lightingRows(protocolVersion).filter((row) => families.has(row.family)).map((row) => row.code);
 }
 
@@ -791,7 +801,8 @@ export function viaMacroToExpression(actions: readonly ViaMacroAction[], protoco
 
 export type ViaControl =
   | { type: "range"; min: number; max: number; unit?: string }
-  | { type: "toggle"; off: number; on: number }
+  /** `anyOn`: every value but `off` counts as on (row/column indicators hold a real LED position when on). */
+  | { type: "toggle"; off: number; on: number; anyOn?: boolean }
   | { type: "dropdown"; options: { label: string; value: number }[] }
   | { type: "color" }
   | { type: "button"; value: number };
@@ -847,7 +858,7 @@ function toControl(entry: Record<string, unknown>): ViaControl | null {
       return { type: "range", min: options[0], max: options[1], ...(unit ? { unit } : {}) };
     }
     case "toggle":
-      return { type: "toggle", off: toggleValue(Array.isArray(options) ? options[0] : undefined, 0), on: toggleValue(Array.isArray(options) ? options[1] : undefined, 1) };
+      return { type: "toggle", off: toggleValue(Array.isArray(options) ? options[0] : undefined, 0), on: toggleValue(Array.isArray(options) ? options[1] : undefined, 1), ...(entry.anyOn === true ? { anyOn: true } : {}) };
     case "dropdown": {
       if (!Array.isArray(options)) return null;
       const choices = options.flatMap((option, index) => {
@@ -1097,6 +1108,73 @@ const LEGACY_LIGHTING: Readonly<Record<string, readonly unknown[]>> = {
   qmk_backlight_rgblight: [{ label: "Lighting", content: [{ label: "Backlight", content: BACKLIGHT_ITEMS }, { label: "Underglow", content: UNDERGLOW_ITEMS }] }],
 };
 
+type WtEffects = readonly (readonly [string, number])[];
+
+const WT_PRESETS: Readonly<Record<string, { effects: WtEffects; supported: readonly number[] }>> = {
+  wt_mono_backlight: {
+    effects: [["All Off", 0], ["All On", 0], ["Raindrops", 0]],
+    supported: [0x09, 0x0a, 0x0b, 0x08, 0x07],
+  },
+  wt_rgb_backlight: {
+    effects: [["All Off", 0], ["Solid Color 1", 1], ["Alphas/Mods Color 1/2", 2], ["Gradient Vertical Color 1/2", 2], ["Raindrops Color 1/2", 2], ["Cycle All", 0], ["Cycle Horizontal", 0], ["Cycle Vertical", 0], ["Jellybean Raindrops", 0], ["Radial All Hues", 0], ["Radial Color 1", 1]],
+    supported: [0x09, 0x0a, 0x0b, 0x08, 0x07, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15],
+  },
+};
+
+/** A Wilba Tech value: single-id commands like the QMK ones, so `legacyId` is the id and the channel is a placeholder; `extra` ids follow the value id on the wire. */
+const wtItem = (id: number, token: string, entry: Record<string, unknown>, extra: readonly number[] = []) => ({ ...entry, content: [token, 0, id, ...extra], legacyId: id });
+
+/** Indicator value ids (colour, row/column) per indicator. */
+const WT_INDICATORS = [[0x0e, 0x0f, "Caps Lock"], [0x10, 0x11, "Layer 1"], [0x12, 0x13, "Layer 2"], [0x14, 0x15, "Layer 3"]] as const;
+const WT_CUSTOM_COLOR = 0x17;
+
+/**
+ * The menus for VIA's Wilba Tech lighting names (`wt_rgb_backlight`, `wt_mono_backlight`), which use the same
+ * single-id commands as the QMK ones but their own value ids and effect lists. A definition that `extends` a
+ * name may replace the effects and the supported ids. An effect that needs more than two colours (a board with the
+ * per-key custom colour, 0x17) is edited through one colour per slot, addressed as the id followed by the slot.
+ * A row/column indicator is on at 254,254 and off at 255,255, as VIA's own app writes it; any other position is on.
+ */
+function wtMenus(name: string, overrides: Record<string, unknown>): unknown[] {
+  const preset = WT_PRESETS[name];
+  const named = Array.isArray(overrides.effects) ? overrides.effects.filter((entry): entry is [string, number] => Array.isArray(entry) && typeof entry[0] === "string") : null;
+  const effects = named && named.length > 0 ? named : preset.effects;
+  const supported = Array.isArray(overrides.supportedLightingValues) ? overrides.supportedLightingValues.filter((value): value is number => typeof value === "number") : preset.supported;
+  const hideIf = (hidden: (needs: number) => boolean): { showIf?: string } => {
+    const showIf = effects.flatMap(([, needs], index) => (hidden(needs) ? [`{id_wt_backlight_effect} != ${index}`] : [])).join(" && ");
+    return showIf ? { showIf } : {};
+  };
+  const slots = supported.includes(WT_CUSTOM_COLOR) ? Math.max(0, ...effects.map(([, needs]) => needs)) : 0;
+  const items: { id: number; entry: Record<string, unknown>; extra?: number[] }[] = [
+    { id: 0x09, entry: { label: "Brightness", type: "range", options: [0, 255] } },
+    { id: 0x0a, entry: { label: "Effect", type: "dropdown", options: effects.map(([label]) => label) } },
+    { id: 0x0b, entry: { label: "Effect Speed", type: "range", options: [0, 3] } },
+    { id: 0x0c, entry: { label: "Color 1", type: "color", ...hideIf((needs) => needs < 1 || needs > 2) } },
+    { id: 0x0d, entry: { label: "Color 2", type: "color", ...hideIf((needs) => needs < 2 || needs > 2) } },
+    ...Array.from({ length: slots > 2 ? slots : 0 }, (_, slot) => ({ id: WT_CUSTOM_COLOR, extra: [slot], entry: { label: `Color ${slot + 1}`, type: "color", ...hideIf((needs) => needs <= slot || needs <= 2) } })),
+    { id: 0x07, entry: { label: "Disable LEDs when USB is suspended", type: "toggle" } },
+    { id: 0x08, entry: { label: "LED Sleep Timeout (0 = never)", type: "range", options: [0, 255], unit: "min" } },
+    ...WT_INDICATORS.flatMap(([colorId, rowColId, label]) => [
+      { id: colorId, entry: { label: `${label} indicator color`, type: "color" } },
+      { id: rowColId, entry: { label: `${label} indicator`, type: "toggle", options: [[255, 255], [254, 254]], anyOn: true } },
+    ]),
+  ];
+  const drawn = items
+    .filter(({ id }) => supported.includes(id))
+    .map(({ id, entry, extra }) => wtItem(id, id === 0x0a ? "id_wt_backlight_effect" : `id_wt_${id}${extra ? `_${extra[0]}` : ""}`, entry, extra));
+  return drawn.length > 0 ? [{ label: "Lighting", content: [{ label: "Backlight", content: drawn }] }] : [];
+}
+
+/** The keycode modules a v2 definition's `lighting` name implies (v2 files do not list any). */
+function lightingKeycodeModules(lighting: unknown): string[] {
+  const name = typeof lighting === "string" ? lighting : isRecord(lighting) && typeof lighting.extends === "string" ? lighting.extends : "";
+  if (name.startsWith("wt_")) return ["wt_keycodes"];
+  if (name === "qmk_backlight") return ["qmk_backlight_keycodes"];
+  if (name === "qmk_rgblight") return ["qmk_rgblight_keycodes"];
+  if (name === "qmk_backlight_rgblight") return ["qmk_backlight_rgblight_keycodes"];
+  return [];
+}
+
 const effectNames = (list: unknown): string[] | null =>
   Array.isArray(list) ? list.flatMap((entry) => (Array.isArray(entry) && typeof entry[0] === "string" ? [entry[0]] : [])) : null;
 
@@ -1105,6 +1183,8 @@ const effectNames = (list: unknown): string[] | null =>
  * effect lists and the lighting values it supports (the same overrides VIA's own reader applies).
  */
 function lightingMenus(lighting: unknown): unknown[] {
+  const wt = typeof lighting === "string" ? lighting : isRecord(lighting) && typeof lighting.extends === "string" ? lighting.extends : "";
+  if (WT_PRESETS[wt]) return wtMenus(wt, isRecord(lighting) ? lighting : {});
   if (typeof lighting === "string") return [...(LEGACY_LIGHTING[lighting] ?? [])];
   if (!isRecord(lighting) || typeof lighting.extends !== "string" || !LEGACY_LIGHTING[lighting.extends]) return [];
   const supported = Array.isArray(lighting.supportedLightingValues) ? lighting.supportedLightingValues.filter((value): value is number => typeof value === "number") : null;
@@ -1156,7 +1236,7 @@ function parseServedDefinition(def: Record<string, unknown>, matrix: ViaMatrix):
     height: finite(layouts.height, Math.max(...boxes.map((b) => b.y1))),
     labels: Array.isArray(layouts.labels) ? layouts.labels : [],
     menus: Array.isArray(def.menus) ? def.menus : [...lightingMenus(def.lighting), ...(Array.isArray(def.customMenus) ? def.customMenus : [])],
-    keycodeModules: Array.isArray(def.keycodes) ? def.keycodes.filter((id): id is string => typeof id === "string") : [],
+    keycodeModules: Array.isArray(def.keycodes) ? def.keycodes.filter((id): id is string => typeof id === "string") : lightingKeycodeModules(def.lighting),
     customKeycodes: Array.isArray(def.customKeycodes)
       ? def.customKeycodes.map((entry: { name?: unknown; title?: unknown; shortName?: unknown }) => ({
           name: String(entry?.name ?? ""),

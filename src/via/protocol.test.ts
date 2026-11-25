@@ -158,7 +158,7 @@ test("a v2 definition names its lighting instead of listing menus, and the QMK n
   assert.equal(glow[1]!.control.type === "dropdown" && glow[1]!.control.options.length, 43);
   assert.deepEqual(parseViaMenus(v2("qmk_backlight").menus)[0]!.sections.map((section) => section.label), ["Backlight"]);
   assert.deepEqual(parseViaMenus(v2("qmk_backlight_rgblight").menus)[0]!.sections.map((section) => section.label), ["Backlight", "Underglow"]);
-  for (const lighting of ["none", "wt_rgb_backlight", { extends: "none" }, undefined]) assert.deepEqual(v2(lighting).menus, []);
+  for (const lighting of ["none", { extends: "none" }, undefined]) assert.deepEqual(v2(lighting).menus, []);
 });
 
 test("a definition keeps encoders and rotated keys, and malformed ones are rejected", () => {
@@ -576,7 +576,60 @@ test("object-form v2 lighting extends a preset and applies its overrides", () =>
   const effect = items.find((item) => item.legacyId === 0x81)!.control;
   assert.deepEqual(effect.type === "dropdown" ? effect.options.map((option) => option.label) : [], ["All Off", "Solid", "Rainbow"]);
   assert.equal(items.find((item) => item.legacyId === 0x83)!.showIf, "{id_qmk_rgblight_effect} != 0 && {id_qmk_rgblight_effect} != 2");
-  assert.deepEqual(parseViaDefinition({ ...SERVED, menus: undefined, lighting: { extends: "wt_rgb_backlight" } }).menus, []);
+});
+
+test("Wilba Tech lighting names become controls on VIA's own value ids", () => {
+  const items = (lighting: unknown) => parseViaMenus(parseViaDefinition({ ...SERVED, menus: undefined, lighting }).menus)[0]!.sections.flatMap((section) => section.items);
+  const rgb = items("wt_rgb_backlight");
+  assert.deepEqual(rgb.map((item) => item.legacyId), [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x07, 0x08, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
+  const effect = rgb[1]!.control;
+  assert.deepEqual(effect.type === "dropdown" ? effect.options.length : 0, 11);
+  assert.deepEqual(rgb[2]!.control, { type: "range", min: 0, max: 3 });
+  // Colour 1 is hidden for effects that use no colour, colour 2 for effects that use fewer than two.
+  assert.equal(rgb[3]!.showIf, "{id_wt_backlight_effect} != 0 && {id_wt_backlight_effect} != 5 && {id_wt_backlight_effect} != 6 && {id_wt_backlight_effect} != 7 && {id_wt_backlight_effect} != 8 && {id_wt_backlight_effect} != 9");
+  assert.equal(rgb[4]!.showIf!.includes("!= 1 "), true);
+  // Row/column indicators are two bytes, off at 255,255 and on at 254,254.
+  assert.deepEqual(rgb[8]!.control, { type: "toggle", off: 0xffff, on: 0xfefe, anyOn: true });
+  assert.equal(rgb[8]!.bytes, 2);
+
+  const mono = items("wt_mono_backlight");
+  assert.deepEqual(mono.map((item) => item.legacyId), [0x09, 0x0a, 0x0b, 0x07, 0x08]);
+  assert.equal(mono.some((item) => item.control.type === "color"), false);
+
+  const custom = items({ extends: "wt_rgb_backlight", effects: [["All Off", 0], ["Solid", 1], ["Pair", 2]], supportedLightingValues: [9, 10, 12, 13] });
+  assert.deepEqual(custom.map((item) => item.legacyId), [0x09, 0x0a, 0x0c, 0x0d]);
+  assert.equal(custom[2]!.showIf, "{id_wt_backlight_effect} != 0");
+  assert.equal(custom[3]!.showIf, "{id_wt_backlight_effect} != 0 && {id_wt_backlight_effect} != 1");
+  assert.deepEqual(parseViaDefinition({ ...SERVED, menus: undefined, lighting: { extends: "wt_rgb_backlight", supportedLightingValues: [] } }).menus, []);
+});
+
+test("a Wilba Tech effect with many colours edits them as custom colour slots", () => {
+  const lighting = { extends: "wt_rgb_backlight", effects: [["All Off", 0], ["Solid", 1], ["Custom", 4]], supportedLightingValues: [9, 10, 12, 13, 23] };
+  const items = parseViaMenus(parseViaDefinition({ ...SERVED, menus: undefined, lighting }).menus)[0]!.sections.flatMap((section) => section.items);
+  assert.deepEqual(items.map((item) => item.legacyId), [0x09, 0x0a, 0x0c, 0x0d, 0x17, 0x17, 0x17, 0x17]);
+  // The slot follows the value id on the wire, and the plain colours step aside for the many-colour effect.
+  assert.deepEqual(items.slice(4).map((item) => item.ids), [[0, 0x17, 0], [0, 0x17, 1], [0, 0x17, 2], [0, 0x17, 3]]);
+  assert.equal(items[2]!.showIf, "{id_wt_backlight_effect} != 0 && {id_wt_backlight_effect} != 2");
+  assert.equal(items[4]!.showIf, "{id_wt_backlight_effect} != 0 && {id_wt_backlight_effect} != 1");
+  assert.equal(items[7]!.showIf, "{id_wt_backlight_effect} != 0 && {id_wt_backlight_effect} != 1");
+  // Without the custom colour id there are no slots.
+  const plain = { ...lighting, supportedLightingValues: [9, 10, 12, 13] };
+  assert.equal(parseViaMenus(parseViaDefinition({ ...SERVED, menus: undefined, lighting: plain }).menus)[0]!.sections[0]!.items.length, 4);
+});
+
+test("a v2 definition's lighting name brings its lighting keycodes", () => {
+  const modules = (lighting: unknown) => parseViaDefinition({ ...SERVED, keycodes: undefined, menus: undefined, lighting }).keycodeModules;
+  assert.deepEqual(modules("wt_mono_backlight"), ["wt_keycodes"]);
+  assert.deepEqual(modules({ extends: "wt_rgb_backlight" }), ["wt_keycodes"]);
+  assert.deepEqual(modules("qmk_backlight_rgblight"), ["qmk_backlight_rgblight_keycodes"]);
+  assert.deepEqual(modules("none"), []);
+  assert.deepEqual(parseViaDefinition({ ...SERVED, keycodes: ["qmk_lighting"] }).keycodeModules, ["qmk_lighting"]);
+  const wt = viaLightingKeycodes(9, ["wt_keycodes"]);
+  assert.deepEqual([wt[0], wt[1], wt.length], [0x5f00, 0x5f01, 14]);
+  assert.equal(viaKeycodeToLayoutName(0x5f00, 9), "BR_INC");
+  assert.equal(viaKeycodeFromLayoutName("S2_DEC", 9), 0x5f0d);
+  // Newer firmware has no such keys, so they are not offered there.
+  assert.deepEqual(viaLightingKeycodes(11, ["wt_keycodes"]), []);
 });
 
 test("TO holds 16 layers before protocol 10, so layer 16 and up is not offered, parsed or described as TO", () => {
