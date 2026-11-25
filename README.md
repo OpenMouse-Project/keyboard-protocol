@@ -48,6 +48,7 @@ filters, the driver registry, and shared status types live under
 | SteelSeries | `@openmouse/keyboard-protocol/steelseries` |
 | Keychron (Hall-effect) | `@openmouse/keyboard-protocol/keychron` |
 | Arbiter Studio | `@openmouse/keyboard-protocol/arbiter` |
+| Glorious (stock firmware) | `@openmouse/keyboard-protocol/glorious` |
 | VIA (QMK/VIA firmware, any vendor) | `@openmouse/keyboard-protocol/via` |
 
 The VIA driver matches the raw-HID collection (`0xFF60:0x61`) on any board and
@@ -116,6 +117,18 @@ entry is `verified: false`. The driver reads identity, per-key travel, the light
 effect and SuperTap, and writes travel, light effects, SuperTap and key
 bindings (including the PRO models' FN layer) with read-back. See
 [the Arbiter ledger](docs/arbiter-support.md).
+
+### Glorious
+
+GMMK Pro, GMMK 2 (65% and 96%), GMMK 3 / 3 Pro (wired, and the Pro Wireless
+by cable), GMMK 3 HE / Pro HE, GMMK Numpad, GMBK 75% and GMMK Eternal 96 on
+their stock Glorious CORE firmware. Ported from
+[Wheelguard](https://github.com/djshiye/wheelguard) (MIT), which decoded the
+frames by reading Glorious CORE; nothing is verified on hardware yet. The boards
+can't report their settings, so the driver only sends: polling rate, debounce,
+lights-off timer, profile and layer, key assignments, macros and (HE)
+actuation and rapid trigger. A board flashed with QMK is left to the VIA
+driver. See [the Glorious ledger](docs/glorious-support.md).
 
 ### BABAO60 HE validation status
 
