@@ -285,6 +285,9 @@ test("macro jobs: in use sends steps and modes; deleting resets the keys first",
     keys: [[{ F1: { kind: "macro", slot: 1 } }, {}, {}], [{}, {}, {}], [{}, {}, {}]],
   };
   assert.deepEqual(gloriousMacroJob(ANSI, base, 1, { name: "A", mode: "once", events: ev }), []);
+  for (const slot of [0, -1, 1.5, 1000]) {
+    assert.throws(() => gloriousMacroJob(ANSI, base, slot, { name: "A", mode: "once", events: ev }), /slot out of range/);
+  }
   assert.deepEqual(gloriousMacroJob(ANSI, s, 1, { name: "A", mode: "once", events: ev }).map((j) => j.frame[1]), [0x05]);
   assert.deepEqual(gloriousMacroJob(ANSI, s, 1, { name: "A", mode: "toggle", events: ev }).map((j) => j.frame[1]), [0x05, 0x04, 0x01, 0x01]);
   const { job, keys } = gloriousDeleteMacroJob(ANSI, s, 1);

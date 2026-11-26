@@ -867,6 +867,7 @@ const usesSlot = (keys: GloriousLayerKeys, slot: number) => Object.values(keys).
  */
 export function gloriousMacroJob(m: GloriousModel, s: GloriousBoardState, slot: number, macro: GloriousMacro): GloriousJob {
   if (!m.macros) throw new RangeError("Macros aren't available on this keyboard.");
+  if (!Number.isInteger(slot) || slot < 1 || slot > GLORIOUS_MAX_MACROS) throw new RangeError("Macro slot out of range.");
   const problem = gloriousMacroProblem(macro.events);
   if (problem) throw new RangeError(problem);
   const inUse = s.keys.some((profile) => profile.some((keys) => usesSlot(keys, slot)));

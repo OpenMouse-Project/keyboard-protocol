@@ -41,6 +41,8 @@ export class GloriousKeyboardHidClient {
   readonly device: HIDDevice;
   readonly model: GloriousModel;
   private queue: Promise<unknown> = Promise.resolve();
+  /** Bumped by close(); jobs queued before it are dropped instead of sent. */
+  private generation = 0;
   private listening = false;
   private readonly profileListeners = new Set<(profile: number, layer: number) => void>();
   private readonly wait: (ms: number) => Promise<void>;
@@ -78,6 +80,8 @@ export class GloriousKeyboardHidClient {
   }
 
   async close(): Promise<void> {
+    this.generation += 1;
+    await this.queue;
     if (this.listening) this.device.removeEventListener("inputreport", this.onReport);
     this.listening = false;
     if (this.device.opened) await this.device.close();
@@ -130,12 +134,15 @@ export class GloriousKeyboardHidClient {
 
   /** Sends a planned job frame by frame, with the pauses CORE leaves, one job at a time. */
   send(job: GloriousJob): Promise<void> {
-    const next = this.queue.then(() => this.sendNow(job));
+    const generation = this.generation;
+    const next = this.queue.then(() => this.sendNow(job, generation));
     this.queue = next.catch(() => undefined);
     return next;
   }
 
-  private async sendNow(job: GloriousJob): Promise<void> {
+  private async sendNow(job: GloriousJob, generation: number): Promise<void> {
+    const closed = () => generation !== this.generation;
+    if (closed()) throw new Error("The keyboard was closed; nothing was sent.");
     const t = GLORIOUS_TRANSPORTS[this.model.protocol];
     const length = this.payloadLength();
     if (length < 63 || length > 1023) throw new Error(`Unexpected settings report size (${length} bytes); nothing was sent.`);
@@ -149,6 +156,7 @@ export class GloriousKeyboardHidClient {
     });
     await this.open();
     for (let i = 0; i < job.length; i++) {
+      if (closed()) throw new Error("The keyboard was closed before the change was fully sent.");
       if (t.output) await this.device.sendReport(t.reportId, payloads[i]!);
       else await this.device.sendFeatureReport(t.reportId, payloads[i]!);
       await this.wait(job[i]!.delayMs);

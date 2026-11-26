@@ -70,6 +70,27 @@ test("frames go out padded to the descriptor's size, without the report id", asy
   assert.equal(sent[1]!.data[0], 0x03);
 });
 
+test("close() drops jobs still queued and stops the one being sent", async () => {
+  const { device, sent } = fakeDevice(0x320f, 0x504a, [settings(0xff01, 1, 7, 263)]);
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const client = new GloriousKeyboardHidClient(device, () => gate);
+  const model = gloriousModel(0x320f, 0x504a)!;
+  const state = gloriousDefaultState(model);
+  const running = client.send([...gloriousPollingJob(model, state, 250), ...gloriousKeysJob(model, state, { KeyA: { kind: "disabled" } })]);
+  const queued = client.send(gloriousPollingJob(model, state, 500));
+  await new Promise((resolve) => setImmediate(resolve));
+  const closing = client.close();
+  release();
+  await assert.rejects(running, /closed before the change was fully sent/);
+  await assert.rejects(queued, /closed; nothing was sent/);
+  await closing;
+  assert.equal(sent.length, 1, "only the frame already on the wire went out");
+  assert.equal(device.opened, false);
+  await client.send(gloriousPollingJob(model, state, 1000));
+  assert.equal(sent.length, 2, "a send after close() reopens and works");
+});
+
 test("HE and Eternal use their own reports", async () => {
   const he = fakeDevice(0x342d, 0xe3de, [settings(0xffff, 2, 0, 64)]);
   const heModel = gloriousModel(0x342d, 0xe3de)!;
