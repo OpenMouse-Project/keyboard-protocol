@@ -12,6 +12,7 @@
     "docs/keychron-support.md",
     "docs/arbiter-support.md",
     "docs/atk-support.md",
+    "docs/glorious-support.md",
     "docs/via-support.md",
     "docs/mchose-support.md",
     "README.md",
@@ -65,6 +66,10 @@
     "./arbiter": {
       "types": "./dist/arbiter/index.d.ts",
       "import": "./dist/arbiter/index.js"
+    },
+    "./glorious": {
+      "types": "./dist/glorious/index.d.ts",
+      "import": "./dist/glorious/index.js"
     },
     "./via": {
       "types": "./dist/via/index.d.ts",

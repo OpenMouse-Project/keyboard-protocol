@@ -40,6 +40,7 @@ import type { KeychronHeFeatures } from "@openmouse/keyboard-protocol/keychron";
 import type { ArbiterKeyboardState } from "@openmouse/keyboard-protocol/arbiter";
 import type { AtkKeyboardState } from "./atk/hid.ts";
 import type { MchoseKeyboardState } from "@openmouse/keyboard-protocol/mchose";
+import type { GloriousModel } from "@openmouse/keyboard-protocol/glorious";
 
 export interface KeyboardUiHints {
   /** Stable driver id, e.g. "wooting". */
@@ -262,6 +263,8 @@ export interface KeyboardStatus {
   atk?: AtkKeyboardState | null;
   /** MCHOSE magnetic keyboard state (identity, profile, performance, key travel). */
   mchose?: MchoseKeyboardState | null;
+  /** Glorious board identity; its settings can't be read, only sent. */
+  glorious?: { model: GloriousModel } | null;
   /** VIA/QMK board identity; keymap, macros and lighting are read on demand. */
   via?: ViaStatus | null;
 }

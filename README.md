@@ -49,6 +49,7 @@ filters, the driver registry, and shared status types live under
 | Keychron (Hall-effect) | `@openmouse/keyboard-protocol/keychron` |
 | Arbiter Studio | `@openmouse/keyboard-protocol/arbiter` |
 | ATK (Hall-effect and RS series) | `@openmouse/keyboard-protocol/atk` |
+| Glorious (stock firmware) | `@openmouse/keyboard-protocol/glorious` |
 | VIA (QMK/VIA firmware, any vendor) | `@openmouse/keyboard-protocol/via` |
 | MCHOSE (Ace 68 Air) | `@openmouse/keyboard-protocol/mchose` |
 
@@ -144,6 +145,18 @@ confirmed by read-back. It was tested on an Air III with firmware 116; the
 ledger lists exactly which reads and writes were exercised on hardware. The
 Air II (`0x2120`) is catalogued from the same bundle and is untested. See
 [the MCHOSE ledger](docs/mchose-support.md).
+
+### Glorious
+
+GMMK Pro, GMMK 2 (65% and 96%), GMMK 3 / 3 Pro (wired, and the Pro Wireless
+by cable), GMMK 3 HE / Pro HE, GMMK Numpad, GMBK 75% and GMMK Eternal 96 on
+their stock Glorious CORE firmware. Ported from
+[Wheelguard](https://github.com/djshiye/wheelguard) (MIT), which decoded the
+frames by reading Glorious CORE; nothing is verified on hardware yet. The boards
+can't report their settings, so the driver only sends: polling rate, debounce,
+lights-off timer, profile and layer, key assignments, macros and (HE)
+actuation and rapid trigger. A board flashed with QMK is left to the VIA
+driver. See [the Glorious ledger](docs/glorious-support.md).
 
 ### BABAO60 HE validation status
 

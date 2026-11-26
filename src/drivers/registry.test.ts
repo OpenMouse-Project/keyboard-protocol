@@ -15,6 +15,7 @@ import {
   ARBITER_HID_FILTERS,
   ATK_HID_FILTERS,
   MCHOSE_HID_FILTERS,
+  GLORIOUS_HID_FILTERS,
   SUPPORTED_HID_FILTERS,
   KEYCHRON_HID_FILTERS,
   KOCHI_HID_FILTERS,
@@ -90,7 +91,7 @@ const LOGITECH_RECEIVER_DEVICE = (): HIDDevice =>
 test("DEVICE_DRIVERS lists one branded entry per supported protocol", () => {
   assert.deepEqual(
     DEVICE_DRIVERS.map((driver) => driver.brand),
-    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Keychron", "Arbiter Studio", "ATK", "MCHOSE", "VIA"],
+    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Keychron", "Arbiter Studio", "ATK", "MCHOSE", "Glorious", "VIA"],
   );
 });
 
@@ -237,6 +238,7 @@ test("SUPPORTED_HID_FILTERS concatenates the vendor filter sets with no duplicat
     ...ARBITER_HID_FILTERS,
     ...ATK_HID_FILTERS,
     ...MCHOSE_HID_FILTERS,
+    ...GLORIOUS_HID_FILTERS,
     ...VIA_HID_FILTERS,
   ]);
   const seen = new Set(SUPPORTED_HID_FILTERS.map((f) => `${f.vendorId}:${f.productId}:${f.usagePage}:${f.usage}`));

@@ -4,6 +4,7 @@ import {
   ARBITER_VENDOR_ID,
   ARBITER_VENDOR_ID_ALT,
 } from "@openmouse/keyboard-protocol/arbiter";
+import { GLORIOUS_MODELS, GLORIOUS_TRANSPORTS } from "@openmouse/keyboard-protocol/glorious";
 import { KOCHI_VENDOR_ID, KOCHI_HB68_PRODUCT_ID, KOCHI_CONFIG_USAGE_PAGE, KOCHI_CONFIG_USAGE } from "@openmouse/keyboard-protocol/kochi";
 import {
   WOOTING_CONFIG_USAGE,
@@ -180,6 +181,17 @@ export const MCHOSE_HID_FILTERS: HIDDeviceFilter[] = MCHOSE_PRODUCT_IDS.map((pro
 }));
 
 /**
+ * Glorious boards on stock firmware, by their own ids and settings collection
+ * (the Eternal's is QMK's 0xFF60:0x61 page, so it must be matched by id).
+ */
+export const GLORIOUS_HID_FILTERS: HIDDeviceFilter[] = GLORIOUS_MODELS.map((model) => ({
+  vendorId: model.vendorId,
+  productId: model.productId,
+  usagePage: GLORIOUS_TRANSPORTS[model.protocol].usagePage,
+  usage: GLORIOUS_TRANSPORTS[model.protocol].usage,
+}));
+
+/**
  * VIA/QMK raw HID (0xFF60:0x61). Any vendor can ship VIA firmware, so this
  * filter has no vendor or product id; it matches the collection only.
  */
@@ -196,5 +208,6 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...ARBITER_HID_FILTERS,
   ...ATK_HID_FILTERS,
   ...MCHOSE_HID_FILTERS,
+  ...GLORIOUS_HID_FILTERS,
   ...VIA_HID_FILTERS,
 ];
