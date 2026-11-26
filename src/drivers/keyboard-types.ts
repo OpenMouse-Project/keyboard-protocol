@@ -38,6 +38,8 @@ import type { LogitechKeyboardState } from "@openmouse/keyboard-protocol/logitec
 import type { SteelSeriesApexProfile } from "@openmouse/keyboard-protocol/steelseries";
 import type { KeychronHeFeatures } from "@openmouse/keyboard-protocol/keychron";
 import type { ArbiterKeyboardState } from "@openmouse/keyboard-protocol/arbiter";
+import type { AtkKeyboardState } from "./atk/hid.ts";
+import type { MchoseKeyboardState } from "@openmouse/keyboard-protocol/mchose";
 import type { GloriousModel } from "@openmouse/keyboard-protocol/glorious";
 
 export interface KeyboardUiHints {
@@ -257,6 +259,10 @@ export interface KeyboardStatus {
   steelseries?: { productId: number; profile: SteelSeriesApexProfile | null; verified: boolean } | null;
   /** Arbiter Studio keyboard state (travel, light effect, SuperTap). */
   arbiter?: ArbiterKeyboardState | null;
+  /** ATK keyboard settings read over the 0xFF60:0x61 channel with the ATK custom commands. */
+  atk?: AtkKeyboardState | null;
+  /** MCHOSE magnetic keyboard state (identity, profile, performance, key travel). */
+  mchose?: MchoseKeyboardState | null;
   /** Glorious board identity; its settings can't be read, only sent. */
   glorious?: { model: GloriousModel } | null;
   /** VIA/QMK board identity; keymap, macros and lighting are read on demand. */

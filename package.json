@@ -11,8 +11,10 @@
     "docs/steelseries-support.md",
     "docs/keychron-support.md",
     "docs/arbiter-support.md",
+    "docs/atk-support.md",
     "docs/glorious-support.md",
     "docs/via-support.md",
+    "docs/mchose-support.md",
     "README.md",
     "CONTRIBUTING.md"
   ],
@@ -57,6 +59,10 @@
       "types": "./dist/keychron/index.d.ts",
       "import": "./dist/keychron/index.js"
     },
+    "./atk": {
+      "types": "./dist/atk/index.d.ts",
+      "import": "./dist/atk/index.js"
+    },
     "./arbiter": {
       "types": "./dist/arbiter/index.d.ts",
       "import": "./dist/arbiter/index.js"
@@ -68,6 +74,10 @@
     "./via": {
       "types": "./dist/via/index.d.ts",
       "import": "./dist/via/index.js"
+    },
+    "./mchose": {
+      "types": "./dist/mchose/index.d.ts",
+      "import": "./dist/mchose/index.js"
     }
   },
   "scripts": {

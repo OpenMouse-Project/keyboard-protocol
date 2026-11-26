@@ -82,6 +82,14 @@ export interface ArbiterProduct {
   layers: number;
   profiles: number;
   superTap: boolean;
+  /**
+   * User-mode wire size. The original generation carries six bytes
+   * `[layoutIndex, mode, checkFlag, flag, keyIndex0, keyIndex1]`; the
+   * current generation (Polar 65+, app2 vendor app) carries an eight-byte
+   * header `[layoutIndex, reserved1, reserved2, mode, checkFlag, flag,
+   * keyIndex0, keyIndex1]` plus two zero pad bytes, i.e. ten on the wire.
+   */
+  userModeBytes: 6 | 10;
   /** False until the model is exercised through this package on hardware. */
   verified: boolean;
 }
@@ -89,8 +97,9 @@ export interface ArbiterProduct {
 const product = (
   name: string, vendorId: number, productId: number, usagePage: number,
   protocol: ArbiterProtocol, travelKeys: number, bindingKeys: number, layers: number, profiles: number, superTap: boolean,
+  userModeBytes: 6 | 10 = 6,
 ): ArbiterProduct => ({
-  name, vendorId, productId, usagePage, protocol, travelKeys, bindingKeys, layers, profiles, superTap, verified: false,
+  name, vendorId, productId, usagePage, protocol, travelKeys, bindingKeys, layers, profiles, superTap, userModeBytes, verified: false,
 });
 
 /**
@@ -121,7 +130,7 @@ export const ARBITER_PRODUCTS: readonly ArbiterProduct[] = [
   // travel writes total 3 (29+29+10 = 68), key-mapping writes total 5
   // (29x4+20 = 136 = 2 layers x 68), SetBoardProfile values 0-2, and
   // Get/SetUserMode traffic, matching the i2 (65 PRO) class.
-  product("Polar 65+", ARBITER_VENDOR_ID_ALT, 0xa009, 0xff02, "i2", 68, 68, 2, 3, true),
+  product("Polar 65+", ARBITER_VENDOR_ID_ALT, 0xa009, 0xff02, "i2", 68, 68, 2, 3, true, 10),
   product("Polar 75 PRO", ARBITER_VENDOR_ID_ALT, 0xa001, 0xff02, "u2", 82, 81, 2, 3, true),
 ];
 
@@ -448,25 +457,39 @@ export interface ArbiterUserMode {
   keyIndex: readonly [number, number];
 }
 
-export function decodeArbiterUserMode(reply: ArbiterReply): ArbiterUserMode | null {
-  if (reply.command !== ARBITER_COMMAND.getUserMode || reply.data.length !== ARBITER_USER_MODE_SIZE) return null;
+export function decodeArbiterUserMode(reply: ArbiterReply, userModeBytes: 6 | 10 = 6): ArbiterUserMode | null {
+  if (reply.command !== ARBITER_COMMAND.getUserMode) return null;
   const data = reply.data;
+  if (userModeBytes === 10) {
+    // Current generation: the board answers ten bytes; the first eight are
+    // the header, the last two are zero padding.
+    if (data.length < 8) return null;
+    return {
+      layoutIndex: data[0]!, mode: data[3]!, checkFlag: data[4]!,
+      flag: data[5]! & 0x7f, alternative: data[5]! >> 7, keyIndex: [data[6]!, data[7]!],
+    };
+  }
+  if (data.length !== ARBITER_USER_MODE_SIZE) return null;
   return {
     layoutIndex: data[0]!, mode: data[1]!, checkFlag: data[2]!,
     flag: data[3]! & 0x7f, alternative: data[3]! >> 7, keyIndex: [data[4]!, data[5]!],
   };
 }
 
-export function encodeArbiterUserModeWrite(mode: ArbiterUserMode): Uint8Array<ArrayBuffer> {
-  const bytes = [mode.layoutIndex, mode.mode, mode.checkFlag, mode.keyIndex[0], mode.keyIndex[1]];
+export function encodeArbiterUserModeWrite(mode: ArbiterUserMode, userModeBytes: 6 | 10 = 6): Uint8Array<ArrayBuffer> {
+  const bytes = userModeBytes === 10
+    ? [mode.layoutIndex, 0, 0, mode.mode, mode.checkFlag, mode.keyIndex[0], mode.keyIndex[1]]
+    : [mode.layoutIndex, mode.mode, mode.checkFlag, mode.keyIndex[0], mode.keyIndex[1]];
   for (const value of bytes) {
     if (!Number.isInteger(value) || value < 0 || value > 0xff) throw new RangeError("Arbiter user-mode values are whole numbers from 0 to 255.");
   }
   if (!Number.isInteger(mode.flag) || mode.flag < 0 || mode.flag > 0x7f) throw new RangeError("Arbiter user-mode flag is 0-127.");
   if (mode.alternative !== 0 && mode.alternative !== 1) throw new RangeError("Arbiter user-mode alternative is 0 or 1.");
-  return encodeArbiterRequest(ARBITER_COMMAND.setUserMode, ARBITER_PACKET.short, [
-    mode.layoutIndex, mode.mode, mode.checkFlag, mode.flag | (mode.alternative << 7), mode.keyIndex[0], mode.keyIndex[1],
-  ]);
+  const flag = mode.flag | (mode.alternative << 7);
+  const body = userModeBytes === 10
+    ? [mode.layoutIndex, 0, 0, mode.mode, mode.checkFlag, flag, mode.keyIndex[0], mode.keyIndex[1], 0, 0]
+    : [mode.layoutIndex, mode.mode, mode.checkFlag, flag, mode.keyIndex[0], mode.keyIndex[1]];
+  return encodeArbiterRequest(ARBITER_COMMAND.setUserMode, ARBITER_PACKET.short, body);
 }
 
 /** Firmware reply: byte 0 is the low and byte 7 the high version byte, shown as `V{high}{low}`. */

@@ -48,8 +48,10 @@ filters, the driver registry, and shared status types live under
 | SteelSeries | `@openmouse/keyboard-protocol/steelseries` |
 | Keychron (Hall-effect) | `@openmouse/keyboard-protocol/keychron` |
 | Arbiter Studio | `@openmouse/keyboard-protocol/arbiter` |
+| ATK (Hall-effect and RS series) | `@openmouse/keyboard-protocol/atk` |
 | Glorious (stock firmware) | `@openmouse/keyboard-protocol/glorious` |
 | VIA (QMK/VIA firmware, any vendor) | `@openmouse/keyboard-protocol/via` |
+| MCHOSE (Ace 68 Air) | `@openmouse/keyboard-protocol/mchose` |
 
 The VIA driver matches the raw-HID collection (`0xFF60:0x61`) on any board and
 covers keymaps, keycode names, encoders, macros and custom-menu lighting. Layout
@@ -117,6 +119,32 @@ entry is `verified: false`. The driver reads identity, per-key travel, the light
 effect and SuperTap, and writes travel, light effects, SuperTap and key
 bindings (including the PRO models' FN layer) with read-back. See
 [the Arbiter ledger](docs/arbiter-support.md).
+
+### ATK
+
+ATK, EDGE, RS and Velota keyboards (vendor id `0x373B`, 107 catalogued product
+ids) answer the VIA-framed raw-HID collection (`0xFF60:0x61`) with their own
+custom commands, which is not VIA's command set. The codec and driver are
+written from the OpenATK keyboard configurator, whose request frames the tests
+compare byte for byte, and are not yet exercised on hardware through this
+package. The driver reads identity, travel limits, dead zones, polling rate,
+sleep, lighting and feature flags, and writes them with read-back, along with
+per-key travel, rapid trigger and advanced keys. QMK-based boards that only
+carry ATK branding (the Hex80 collaboration) are not catalogued and stay on the
+generic VIA driver. See [the ATK ledger](docs/atk-support.md).
+
+### MCHOSE
+
+The Ace 68 Air III (`0x41E4:0x2132`) speaks a 64-byte command protocol on its
+USB interface 1 collection (usage page `0x0001`, usage 0), reverse-engineered
+from the vendor's M HUB web configurator. It covers identity, profiles and
+their names, polling, keyboard settings, per-key travel and rapid trigger,
+keymaps on all four layers, macros, DKS, mod-tap, toggle and pair keys,
+lighting, per-key colours, calibration and factory reset. Every write is
+confirmed by read-back. It was tested on an Air III with firmware 116; the
+ledger lists exactly which reads and writes were exercised on hardware. The
+Air II (`0x2120`) is catalogued from the same bundle and is untested. See
+[the MCHOSE ledger](docs/mchose-support.md).
 
 ### Glorious
 

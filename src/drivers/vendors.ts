@@ -43,7 +43,14 @@ import {
   STEELSERIES_KEYBOARD_PRODUCT_IDS,
   STEELSERIES_VENDOR_ID,
 } from "@openmouse/keyboard-protocol/steelseries";
+import { ATK_CONFIG_USAGE, ATK_CONFIG_USAGE_PAGE, ATK_KEYBOARD_PRODUCT_IDS, ATK_VENDOR_ID } from "@openmouse/keyboard-protocol/atk";
 import { VIA_USAGE, VIA_USAGE_PAGE } from "@openmouse/keyboard-protocol/via";
+import {
+  MCHOSE_CONFIG_USAGE,
+  MCHOSE_CONFIG_USAGE_PAGE,
+  MCHOSE_KEYBOARD_VENDOR_ID,
+  MCHOSE_PRODUCT_IDS,
+} from "@openmouse/keyboard-protocol/mchose";
 
 export const VENDOR_ID = {
   kochi: KOCHI_VENDOR_ID,
@@ -56,6 +63,7 @@ export const VENDOR_ID = {
   keychron: KEYCHRON_VENDOR_ID,
   arbiter: ARBITER_VENDOR_ID,
   arbiterAlt: ARBITER_VENDOR_ID_ALT,
+  mchose: MCHOSE_KEYBOARD_VENDOR_ID,
 } as const;
 
 // Match the two command-capable collections rather than enumerating every
@@ -148,6 +156,31 @@ export const ARBITER_HID_FILTERS: HIDDeviceFilter[] = ARBITER_PRODUCTS.map((entr
 }));
 
 /**
+ * ATK keyboards answer the VIA-framed raw-HID collection (0xFF60:0x61) with
+ * their own custom commands. Each catalogued product id is filtered
+ * explicitly so no other vendor's VIA board is claimed as an ATK keyboard.
+ */
+export const ATK_HID_FILTERS: HIDDeviceFilter[] = ATK_KEYBOARD_PRODUCT_IDS.map((productId) => ({
+  vendorId: ATK_VENDOR_ID,
+  productId,
+  usagePage: ATK_CONFIG_USAGE_PAGE,
+  usage: ATK_CONFIG_USAGE,
+}));
+
+/**
+ * MCHOSE magnetic keyboards answer on a top-level Generic Desktop collection
+ * with usage 0 (USB interface 1). Each catalogued product id is filtered
+ * explicitly; the keyboard's boot-keyboard, mouse and consumer collections
+ * use other usages and stay out of the picker.
+ */
+export const MCHOSE_HID_FILTERS: HIDDeviceFilter[] = MCHOSE_PRODUCT_IDS.map((productId) => ({
+  vendorId: MCHOSE_KEYBOARD_VENDOR_ID,
+  productId,
+  usagePage: MCHOSE_CONFIG_USAGE_PAGE,
+  usage: MCHOSE_CONFIG_USAGE,
+}));
+
+/**
  * Glorious boards on stock firmware, by their own ids and settings collection
  * (the Eternal's is QMK's 0xFF60:0x61 page, so it must be matched by id).
  */
@@ -173,6 +206,8 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...STEELSERIES_HID_FILTERS,
   ...KEYCHRON_HID_FILTERS,
   ...ARBITER_HID_FILTERS,
+  ...ATK_HID_FILTERS,
+  ...MCHOSE_HID_FILTERS,
   ...GLORIOUS_HID_FILTERS,
   ...VIA_HID_FILTERS,
 ];

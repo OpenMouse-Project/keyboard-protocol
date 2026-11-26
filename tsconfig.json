@@ -53,6 +53,9 @@
       "@openmouse/keyboard-protocol/arbiter": [
         "./src/arbiter/index.ts"
       ],
+      "@openmouse/keyboard-protocol/mchose": [
+        "./src/mchose/index.ts"
+      ],
       "@openmouse/keyboard-protocol/glorious": [
         "./src/glorious/index.ts"
       ]

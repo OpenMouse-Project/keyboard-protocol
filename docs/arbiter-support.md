@@ -161,7 +161,12 @@ main layer with these keys replaced (matrix key, then the FN code):
   - `LShift` gives code 249, which the vendor labels **SuperTap**. `LAlt`,
     `RAlt` and `LWin` hold codes 242/242/243; 242 is labelled **Fn**.
   - `Esc` (224), `Enter` (148), `RShift` (202) and the arrows (204, 205, 206,
-    207) hold reserved codes the vendor gives no label.
+    207) hold reserved codes the vendor gives no label. A Polar 65+ owner
+    decoded them from the keyboard's onboard shortcuts: `Enter` changes RGB
+    mode, `RShift` switches between the 7 preset colors, `↑`/`↓` adjust
+    brightness, `←`/`→` adjust effect speed, `Esc` (hold 5 s) factory-resets,
+    and the `Windows` key (243) toggles game mode. They drive keyboard
+    functions locally, not settings OpenMouse writes.
 - **75 PRO (8 keys):** `F9`-`F12` give previous, play/pause, next and `Print`;
   `` ` `` gives `Insert`; `LShift` gives SuperTap (249); `RAlt` gives Fn (242);
   `Home` gives `End`.
@@ -190,8 +195,8 @@ not say.
 | `GetKeyMappingPerKeys` | 29 | short | defined on the PRO classes but never called by the bundle; not implemented | |
 | `GetAllProfile` | 35 | long | `index\|total<<4` (total 10) | requested packet by packet until `index == total - 1`; payload not decoded |
 | `SetBoardProfile` | 38 | short | one byte, the profile index | data change flag |
-| `GetUserMode` | 53 | short | none (`dataSize` 6) | 6 bytes, see SuperTap |
-| `SetUserMode` | 52 | short | 6 bytes, see SuperTap | data change flag |
+| `GetUserMode` | 53 | short | none (`dataSize` 6) | 6 bytes (original) or 10 bytes (current generation), see SuperTap |
+| `SetUserMode` | 52 | short | 6 bytes (original) or 10 bytes (current generation), see SuperTap | data change flag |
 
 Keys in the travel and mapping tables follow the layout array `keyMaxtrix`
 (68 entries for the 65s, listed in the bundle as `_P`/`J4`), not HID usages.
@@ -263,14 +268,20 @@ held, only the later press counts. This comes from Arbiter's announcement and
 press reviews, not from the firmware, so the exact resolution rule (for example
 what happens on release) is unconfirmed.
 
-**What the wire carries.** `SetUserMode`/`GetUserMode` carry six bytes:
+**What the wire carries.** The original generation carries six bytes:
 `[layoutIndex, mode, checkFlag, flag & 0x7F | alternative-bit, keyIndex0,
-keyIndex1]`. The vendor app writes `mode` 1, `flag` 0 and `alternative` 0, takes
-`layoutIndex` from the current layer, reads `checkFlag > 0` as enabled and
+keyIndex1]`. The current generation (Polar 65+, app2 vendor app) carries an
+eight-byte header `[layoutIndex, reserved1, reserved2, mode, checkFlag,
+flag & 0x7F | alternative-bit, keyIndex0, keyIndex1]` plus two zero pad
+bytes, i.e. ten on the wire; its get-reply is accepted with eight or more
+bytes. Both generations write `mode` 1, `flag` 0 and `alternative` 0, take
+`layoutIndex` from the current layer, read `checkFlag > 0` as enabled and
 `keyIndex0/1` as the two keys of the pair. In its UI you switch SuperTap on,
 click one of two key tiles and then a key on the keyboard drawing. Turning the
 switch saves the profile before sending the user mode. Only models with
-`superTapSupport` expose it.
+`superTapSupport` expose it. The driver sends each model its own size
+(`userModeBytes` in the catalog); the Polar 65+ needs ten, everything else
+stays on six until a capture proves otherwise.
 
 **`keyIndex` is a wire index, not a matrix position.** The vendor app finds each
 key's position in the main layer's layout array and sends that index; the `s2`
@@ -339,8 +350,8 @@ Behavior worth knowing:
   matrix defaults are all `0`. It only carries a nonzero value if the keyboard
   itself reports one. The driver therefore writes `0` for a rebound key and
   leaves other keys' values untouched.
-- What the FN layer's reserved codes (224, 148, 202, 204-207, 243) do, and how
-  the keyboard activates the layer; only the factory defaults are known.
+- How the keyboard activates the FN layer; only the factory defaults are known
+  (a Polar 65+ owner has decoded what most reserved codes do — see above).
 - Which of the `s2` travel read and write sizes is right (see
   [Table sizes](#table-sizes)).
 - Wireless, Bluetooth and dongle transports. The bundle has per-transport
