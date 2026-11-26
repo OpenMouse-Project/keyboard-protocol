@@ -336,7 +336,7 @@ export class ArbiterKeyboardHidClient {
 
   private async readUserModeValue(): Promise<ArbiterUserMode> {
     const reply = await this.exchange(ARBITER_COMMAND.getUserMode, encodeArbiterShortRead(ARBITER_COMMAND.getUserMode));
-    const mode = decodeArbiterUserMode(reply);
+    const mode = decodeArbiterUserMode(reply, this.requireProduct().userModeBytes);
     if (!mode) throw new Error("The Arbiter keyboard returned an unreadable user mode.");
     return mode;
   }
@@ -345,14 +345,16 @@ export class ArbiterKeyboardHidClient {
   setUserMode(mode: ArbiterUserMode): Promise<ArbiterUserMode> {
     return this.serialized(async () => {
       this.requireSuperTap();
-      const frame = encodeArbiterUserModeWrite(mode);
+      const userModeBytes = this.requireProduct().userModeBytes;
+      const frame = encodeArbiterUserModeWrite(mode, userModeBytes);
       const ack = await this.exchange(ARBITER_COMMAND.setUserMode, frame);
       if (decodeArbiterWriteAck(ack, ARBITER_COMMAND.setUserMode) === null) {
         throw new Error("The Arbiter keyboard did not acknowledge the user mode.");
       }
       const confirmed = await this.readUserModeValue();
-      const echoed = encodeArbiterUserModeWrite(confirmed);
-      if (frame.slice(4, 10).some((byte, i) => byte !== echoed[4 + i])) {
+      const echoed = encodeArbiterUserModeWrite(confirmed, userModeBytes);
+      const size = frame[3]!;
+      if (frame.slice(4, 4 + size).some((byte, i) => byte !== echoed[4 + i])) {
         throw new Error("The Arbiter keyboard did not retain the user mode.");
       }
       return confirmed;

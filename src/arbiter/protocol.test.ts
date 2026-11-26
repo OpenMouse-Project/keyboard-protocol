@@ -147,6 +147,15 @@ test("user mode splits the flag from the alternative bit", () => {
   assert.equal(decodeArbiterUserMode(decodeArbiterReply(reply(53, [1, 2]))!), null);
   assert.throws(() => encodeArbiterUserModeWrite({ ...decoded!, flag: 128 }), RangeError);
   assert.throws(() => encodeArbiterUserModeWrite({ ...decoded!, alternative: 2 as never }), RangeError);
+  // Current generation (Polar 65+, app2 vendor app): eight header bytes plus
+  // two zero pad bytes, as captured on real hardware.
+  const decoded10 = decodeArbiterUserMode(decodeArbiterReply(reply(53, [0, 0, 0, 1, 1, 0, 0x1f, 0x21, 0, 0]))!, 10);
+  assert.deepEqual(decoded10, { layoutIndex: 0, mode: 1, checkFlag: 1, flag: 0, alternative: 0, keyIndex: [0x1f, 0x21] });
+  const frame10 = encodeArbiterUserModeWrite(decoded10!, 10);
+  assert.deepEqual([...frame10.slice(0, 5)], [0, 52, 0, 10, 0]);
+  assert.deepEqual([...frame10.slice(4, 14)], [0, 0, 0, 1, 1, 0, 0x1f, 0x21, 0, 0]);
+  assert.equal(decodeArbiterUserMode(decodeArbiterReply(reply(53, [0, 0, 0, 1, 1, 0]))!, 10), null);
+  assert.equal(decodeArbiterUserMode(decodeArbiterReply(reply(53, [0, 0, 0, 1, 1, 0, 0x1f, 0x21, 0, 0]))!), null);
 });
 
 test("write acknowledgements read the flag and tolerate a short body", () => {
@@ -165,6 +174,8 @@ test("the catalog matches the vendor bundle and is entirely unverified", () => {
   // 0xA009 lives on 0xFF02 only: that is the page the vendor app claims,
   // and the board's 0xFF01 collection answers nothing.
   assert.equal(arbiterProduct(0x371c, 0xa009, 0xff02)?.protocol, "i2");
+  assert.equal(arbiterProduct(0x371c, 0xa009, 0xff02)?.userModeBytes, 10);
+  assert.deepEqual(ARBITER_PRODUCTS.map((entry) => entry.userModeBytes), [6, 6, 6, 6, 6, 6, 6, 10, 6]);
   assert.equal(arbiterProduct(0x371c, 0xa009, 0xff01), undefined);
   assert.deepEqual(ARBITER_PRODUCTS.map((entry) => [entry.name, entry.travelKeys, entry.bindingKeys, arbiterTravelPackets(entry), arbiterKeyMappingPackets(entry)]), [
     ["Arbiter Polar 65", 68, 68, 3, 3], ["Arbiter Polar 65", 68, 68, 3, 3], ["Polar 65", 68, 68, 3, 3], ["Nimbus 65", 68, 68, 3, 3],
