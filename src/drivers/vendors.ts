@@ -44,6 +44,12 @@ import {
 } from "@openmouse/keyboard-protocol/steelseries";
 import { ATK_CONFIG_USAGE, ATK_CONFIG_USAGE_PAGE, ATK_KEYBOARD_PRODUCT_IDS, ATK_VENDOR_ID } from "@openmouse/keyboard-protocol/atk";
 import { VIA_USAGE, VIA_USAGE_PAGE } from "@openmouse/keyboard-protocol/via";
+import {
+  MCHOSE_CONFIG_USAGE,
+  MCHOSE_CONFIG_USAGE_PAGE,
+  MCHOSE_KEYBOARD_VENDOR_ID,
+  MCHOSE_PRODUCT_IDS,
+} from "@openmouse/keyboard-protocol/mchose";
 
 export const VENDOR_ID = {
   kochi: KOCHI_VENDOR_ID,
@@ -56,6 +62,7 @@ export const VENDOR_ID = {
   keychron: KEYCHRON_VENDOR_ID,
   arbiter: ARBITER_VENDOR_ID,
   arbiterAlt: ARBITER_VENDOR_ID_ALT,
+  mchose: MCHOSE_KEYBOARD_VENDOR_ID,
 } as const;
 
 // Match the two command-capable collections rather than enumerating every
@@ -160,6 +167,19 @@ export const ATK_HID_FILTERS: HIDDeviceFilter[] = ATK_KEYBOARD_PRODUCT_IDS.map((
 }));
 
 /**
+ * MCHOSE magnetic keyboards answer on a top-level Generic Desktop collection
+ * with usage 0 (USB interface 1). Each catalogued product id is filtered
+ * explicitly; the keyboard's boot-keyboard, mouse and consumer collections
+ * use other usages and stay out of the picker.
+ */
+export const MCHOSE_HID_FILTERS: HIDDeviceFilter[] = MCHOSE_PRODUCT_IDS.map((productId) => ({
+  vendorId: MCHOSE_KEYBOARD_VENDOR_ID,
+  productId,
+  usagePage: MCHOSE_CONFIG_USAGE_PAGE,
+  usage: MCHOSE_CONFIG_USAGE,
+}));
+
+/**
  * VIA/QMK raw HID (0xFF60:0x61). Any vendor can ship VIA firmware, so this
  * filter has no vendor or product id; it matches the collection only.
  */
@@ -175,5 +195,6 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...KEYCHRON_HID_FILTERS,
   ...ARBITER_HID_FILTERS,
   ...ATK_HID_FILTERS,
+  ...MCHOSE_HID_FILTERS,
   ...VIA_HID_FILTERS,
 ];

@@ -39,6 +39,7 @@ import type { SteelSeriesApexProfile } from "@openmouse/keyboard-protocol/steels
 import type { KeychronHeFeatures } from "@openmouse/keyboard-protocol/keychron";
 import type { ArbiterKeyboardState } from "@openmouse/keyboard-protocol/arbiter";
 import type { AtkKeyboardState } from "./atk/hid.ts";
+import type { MchoseKeyboardState } from "@openmouse/keyboard-protocol/mchose";
 
 export interface KeyboardUiHints {
   /** Stable driver id, e.g. "wooting". */
@@ -259,6 +260,8 @@ export interface KeyboardStatus {
   arbiter?: ArbiterKeyboardState | null;
   /** ATK keyboard settings read over the 0xFF60:0x61 channel with the ATK custom commands. */
   atk?: AtkKeyboardState | null;
+  /** MCHOSE magnetic keyboard state (identity, profile, performance, key travel). */
+  mchose?: MchoseKeyboardState | null;
   /** VIA/QMK board identity; keymap, macros and lighting are read on demand. */
   via?: ViaStatus | null;
 }
