@@ -12,6 +12,7 @@
     "docs/keychron-support.md",
     "docs/arbiter-support.md",
     "docs/via-support.md",
+    "docs/mchose-support.md",
     "README.md",
     "CONTRIBUTING.md"
   ],
@@ -63,6 +64,10 @@
     "./via": {
       "types": "./dist/via/index.d.ts",
       "import": "./dist/via/index.js"
+    },
+    "./mchose": {
+      "types": "./dist/mchose/index.d.ts",
+      "import": "./dist/mchose/index.js"
     }
   },
   "scripts": {

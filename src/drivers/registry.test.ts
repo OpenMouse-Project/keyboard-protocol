@@ -12,6 +12,7 @@ import { ViaHidClient } from "./via/hid.ts";
 import { DEVICE_DRIVERS, clientSupportScore, createSupportedClient, deviceBrand } from "./registry.ts";
 import {
   ARBITER_HID_FILTERS,
+  MCHOSE_HID_FILTERS,
   SUPPORTED_HID_FILTERS,
   KEYCHRON_HID_FILTERS,
   KOCHI_HID_FILTERS,
@@ -87,7 +88,7 @@ const LOGITECH_RECEIVER_DEVICE = (): HIDDevice =>
 test("DEVICE_DRIVERS lists one branded entry per supported protocol", () => {
   assert.deepEqual(
     DEVICE_DRIVERS.map((driver) => driver.brand),
-    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Keychron", "Arbiter Studio", "VIA"],
+    ["Kochi", "Wooting", "Wuque Studio", "Razer", "Logitech", "SteelSeries", "Keychron", "Arbiter Studio", "MCHOSE", "VIA"],
   );
 });
 
@@ -224,6 +225,7 @@ test("SUPPORTED_HID_FILTERS concatenates the vendor filter sets with no duplicat
     ...STEELSERIES_HID_FILTERS,
     ...KEYCHRON_HID_FILTERS,
     ...ARBITER_HID_FILTERS,
+    ...MCHOSE_HID_FILTERS,
     ...VIA_HID_FILTERS,
   ]);
   const seen = new Set(SUPPORTED_HID_FILTERS.map((f) => `${f.vendorId}:${f.productId}:${f.usagePage}:${f.usage}`));

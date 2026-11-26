@@ -7,6 +7,7 @@ import { SteelSeriesKeyboardHidClient } from "./steelseries/hid.ts";
 import { KeychronHidClient } from "./keychron/hid.ts";
 import { ArbiterKeyboardHidClient } from "./arbiter/hid.ts";
 import { ViaHidClient } from "./via/hid.ts";
+import { MchoseKeyboardHidClient } from "./mchose/hid.ts";
 
 export type SupportedClient =
   | WootingHidClient
@@ -17,6 +18,7 @@ export type SupportedClient =
   | SteelSeriesKeyboardHidClient
   | KeychronHidClient
   | ArbiterKeyboardHidClient
+  | MchoseKeyboardHidClient
   | ViaHidClient;
 
 export interface DeviceDriver {
@@ -35,6 +37,7 @@ export const DEVICE_DRIVERS: readonly DeviceDriver[] = [
   { brand: "SteelSeries", supports: (device) => SteelSeriesKeyboardHidClient.isSupported(device), create: (device) => new SteelSeriesKeyboardHidClient(device), score: () => 6 },
   { brand: "Keychron", supports: (device) => KeychronHidClient.isSupported(device), create: (device) => new KeychronHidClient(device), score: () => 6 },
   { brand: "Arbiter Studio", supports: (device) => ArbiterKeyboardHidClient.isSupported(device), create: (device) => new ArbiterKeyboardHidClient(device), score: () => 6 },
+  { brand: "MCHOSE", supports: (device) => MchoseKeyboardHidClient.isSupported(device), create: (device) => new MchoseKeyboardHidClient(device), score: () => 6 },
   // Last: VIA matches any board with a raw-HID collection, so brand drivers win.
   { brand: "VIA", supports: (device) => ViaHidClient.isSupported(device), create: (device) => new ViaHidClient(device), score: () => 5 },
 ];
